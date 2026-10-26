@@ -1,0 +1,226 @@
+# 构建与发布流水线（v1.0 E3 开源准备）
+#
+# ★★ 核心职责：**注入构建指纹**（L2 代码水印）
+#
+#   为什么必须在 CI 注入而不是本地生成：
+#     · 每个**分发包**要有唯一 BUILD_ID → 泄漏后能定位"从哪来的"
+#     · 本地构建用 `dev-local`（见 build_info.py），天然区分"官方构建"与"自己编的"
+#
+#   ★ 指纹注入方式：写环境变量 → `build_info` 读取。
+#     不生成文件（避免"构建产物进版本库"的脏习惯）。
+name: build
+
+on:
+  push:
+    tags: ["v*"]                    # 打 tag 时出正式包
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "22"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt pytest
+
+      - name: 全量测试
+        # ★ 关闭后台 worker（避免测试污染，见 MEMORY §62）
+        env:
+          NOVELFORGE_DISABLE_WORKERS: "1"
+        run: pytest tests/ --ignore=tests/test_import.py -q
+
+      # ★★ v1.0-E4.10 新增：全端点 HTTP 冒烟
+      #
+      #   ★★ 为什么必须进 CI（这是最有价值的一道门禁）：
+      #
+      #   v1.0-E4.8/E4.9 修出 8 个真实 500（漏导入 / 路径遍历 /
+      #   异常未处理），而**当时的 2596 例全量测试一个都没抓到** ——
+      #
+      #   根因：那些测试都是 `xxx.func(...)` **直调模块函数**，
+      #   **从来没走过 FastAPI 路由层**。
+      #
+      #   ★★ 判据（MEMORY §29 三层测试体系）：
+      #     ① 单元（模块函数）② 集成（跨模块）
+      #     ③ **HTTP 冒烟（路由层）** ← 只有这层能发现"路由层问题"
+      #
+      #   ★ 实现：遍历 OpenAPI schema 自动注入边界输入，
+      #     **判据：5xx = bug**（4xx 是正确处理）。
+      #     1601 次请求覆盖全部 383 个端点（手写不可能）。
+      #
+      #   ★ 内存模式：用 TestClient，**无需启动服务**，秒级完成。
+      #   ★ 自动关闭限流（否则 1600 次请求会触发 429 → 假阴性）
+      - name: 全端点 HTTP 冒烟
+        env:
+          NOVELFORGE_DISABLE_WORKERS: "1"
+        run: |
+          python deploy/smoke_all_endpoints.py
+          echo "✅ 全端点冒烟通过（无 5xx）"
+
+      # ★★ v1.0-E3.1 新增：发布前安全审计
+      #
+      #   为什么必须进 CI（而不是"发布前手工跑一次"）：
+      #     · 手工步骤会被忘记 —— 尤其在赶时间的时候
+      #     · PR 里混入密钥是**最常见**的开源事故
+      #     · 凭据一旦 push，fork/缓存/搜索引擎可能长期留有副本
+      #
+      #   ★ 检测内容：真密钥格式（AWS/GitHub/Slack/私钥）+ 含密码的连接串
+      #   ★ 占位符（CHANGE_ME / user:pass / ${VAR}）不会误报
+      - name: 安全审计（凭据泄漏检查）
+        env:
+          # ★ 项目专属凭据前缀从仓库 Secret 读，绝不硬编码
+          NF_LEAK_TOKENS: ${{ secrets.NF_LEAK_TOKENS }}
+        run: |
+          python deploy/audit_opensource.py
+          echo "✅ 安全审计通过"
+
+      - name: 许可证与社区文件检查
+        # ★ 防"忘了带 LICENSE 就发布" —— BSL 要求每个副本都显示许可证
+        # ★ v1.0-E3.1：补充开源标准配套文件检查
+        run: |
+          for f in LICENSE COMMERCIAL.md README.md SECURITY.md CONTRIBUTING.md; do
+            test -f "$f" || { echo "❌ 缺少 $f"; exit 1; }
+            echo "  ✅ $f"
+          done
+          grep -q "Business Source License" LICENSE || { echo "❌ LICENSE 内容异常"; exit 1; }
+          grep -q "2030" LICENSE || { echo "❌ LICENSE 缺少自动转 Apache 2.0 的期限"; exit 1; }
+          echo "✅ 许可证与社区文件齐备"
+
+  frontend:
+    # ★★ v1.0-E3.1 新增：前端类型检查独立 job
+    #
+    #   为什么单独一个 job（而不是塞进 test）：
+    #     · 与后端测试**并行**跑，节省 CI 时间
+    #     · 失败时一眼看出"是前端问题还是后端问题"
+    #
+    #   ★ 判据：类型检查是**零容忍**的 —— 我们的铁律是"tsc 零错误"。
+    #     类型错误会以"运行时白屏"的形式暴露，比编译期难查十倍。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web2/package-lock.json
+
+      - name: 安装依赖
+        working-directory: apps/web2
+        run: npm ci --no-audit --no-fund
+
+      - name: 类型检查
+        working-directory: apps/web2
+        run: npx vue-tsc --noEmit
+
+      - name: 构建验证
+        working-directory: apps/web2
+        run: npm run build:only
+
+  build:
+    needs: [test, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ★ 需要完整历史来算源码指纹
+          fetch-depth: 0
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web2/package-lock.json
+
+      - name: 计算构建指纹
+        id: fingerprint
+        run: |
+          # ★ 构建 ID：版本号 + 短 SHA + 时间戳 → 每个构建唯一
+          VERSION=$(grep -oP 'APP_VERSION\s*=\s*"\K[^"]+' apps/api/config.py)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TS=$(date -u +%Y%m%d%H%M)
+          BUILD_ID="sozeer-${VERSION}-${SHORT_SHA}-${TS}"
+          # ★ 源码指纹：对 git 索引做哈希（比逐文件快且稳定）
+          BUILD_HASH="sha256:$(git ls-files -s | sha256sum | cut -c1-16)"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "build_hash=$BUILD_HASH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "构建 ID: $BUILD_ID"
+          echo "源码指纹: $BUILD_HASH"
+
+      - name: 构建前端
+        working-directory: apps/web2
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:only
+
+      - name: 打包源码
+        env:
+          SOZEER_BUILD_ID: ${{ steps.fingerprint.outputs.build_id }}
+          SOZEER_BUILD_HASH: ${{ steps.fingerprint.outputs.build_hash }}
+          SOZEER_CHANNEL: release
+          SOZEER_BUILD_TIME: ${{ github.event.repository.updated_at }}
+        run: |
+          # ★ 把指纹写进包内的元信息文件（部署脚本可读）
+          mkdir -p dist
+          cat > dist/build.json <<EOF
+          {
+            "build_id": "${SOZEER_BUILD_ID}",
+            "build_hash": "${SOZEER_BUILD_HASH}",
+            "version": "${{ steps.fingerprint.outputs.version }}",
+            "channel": "${SOZEER_CHANNEL}",
+            "license": "BSL-1.1",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": "${GITHUB_SHA}",
+            "homepage": "https://sozeer.com"
+          }
+          EOF
+          # 校验：build.json 必须能被解析且字段齐全
+          python -c "
+          import json
+          d = json.load(open('dist/build.json'))
+          for k in ('build_id','build_hash','version','license'):
+              assert d.get(k), f'缺少字段 {k}'
+          assert d['license'] == 'BSL-1.1'
+          print('✅ build.json 校验通过:', d['build_id'])
+          "
+          # ★ 打包（排除开发产物与数据）
+          #
+          # ★★ v1.0-E3.1：清单补齐 —— 原来漏了 SECURITY/CONTRIBUTING 等，
+          #   导致用户拿到的包里没有安全披露渠道说明（开源项目的基本义务）。
+          #
+          # ★ 维护提示：**新增根目录文件时记得加到这里**，
+          #   否则"仓库里有、包里没有"（用户看不到）。
+          tar --exclude='.git' --exclude='node_modules' --exclude='data' \
+              --exclude='.venv' --exclude='__pycache__' --exclude='dist' \
+              --exclude='.pytest_cache' --exclude='invoices' \
+              -czf "dist/sozeer-${{ steps.fingerprint.outputs.version }}.tar.gz" \
+              apps deploy docs tools tests \
+              LICENSE COMMERCIAL.md README.md CHANGELOG.md \
+              SECURITY.md CONTRIBUTING.md CODE_OF_CONDUCT.md \
+              requirements.txt Dockerfile docker-compose.yml \
+              .env.example dist/build.json
+          ls -lh dist/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sozeer-${{ steps.fingerprint.outputs.build_id }}
+          path: dist/
+          retention-days: 90

@@ -1,0 +1,166 @@
+# Business Source License 1.1
+
+**License text copyright © 2023 MariaDB plc, All Rights Reserved.**
+"Business Source License" is a trademark of MariaDB plc.
+
+---
+
+## Parameters
+
+| Parameter | Value |
+|---|---|
+| **Licensor** | 溯字 SOZEER 项目所有者（以下简称"许可方"） |
+| **Licensed Work** | 溯字 SOZEER（SOZEER），包括其全部源码、文档与构建产物 |
+| **Additional Use Grant** | 见下方「Additional Use Grant（附加使用授权）」 |
+| **Change Date** | 2030-10-16 |
+| **Change License** | Apache License, Version 2.0 |
+
+---
+
+## Additional Use Grant（附加使用授权）
+
+在遵守本许可证全部条款的前提下，许可方**额外授权**下列非商业用途：
+
+### ✅ 明确允许（无需申请、无需付费）
+
+| 用途 | 说明 |
+|---|---|
+| **个人学习与研究** | 阅读、调试、修改源码，用于学习 AI 应用开发 |
+| **个人非商业创作** | 个人作者使用本软件辅助创作自己的作品（**作品版权完全归你**） |
+| **非生产环境测试** | 在开发机、测试环境部署评估，不限时长 |
+| **开源项目集成** | 集成进**非商业**开源项目（须保留本许可证与版权声明） |
+| **学术研究** | 高校/科研机构用于非商业研究，论文引用请注明来源 |
+| **教学使用** | 课堂教学、培训课程中演示与讲解（非收费课程除外） |
+
+### ❌ 明确禁止（需购买商业授权）
+
+| 用途 | 说明 |
+|---|---|
+| **SaaS / 托管服务** | 以本软件对外提供在线服务（无论是否收费、无论是否修改） |
+| **企业内部生产使用** | 公司内部作为生产工具使用（含仅内部员工使用） |
+| **集成进收费产品** | 作为收费产品/服务的一部分分发或提供 |
+| **提供付费支持/咨询** | 基于本软件提供收费的技术支持、定制开发、代运维 |
+| **去除或规避许可限制** | 移除、遮蔽本软件的许可声明、构建指纹、遥测合规提示 |
+| **再许可** | 将本软件以其他许可证重新发布（含修改后的衍生版本） |
+
+> ⚠️ **灰色地带怎么办？** 拿不准就问：`license@sozeer.com`。
+> 我们倾向于**先授权、后做事**，而不是事后追责。
+
+---
+
+## 关于"开源"的准确表述
+
+**本软件是「源码开放」（source-available），不是 OSI 认证的「开源」（open source）。**
+
+BSL 1.1 不满足 OSI 开源定义中的"不得限制使用领域"条款。请在产品介绍、
+推广物料、内部文档中统一使用：
+
+```
+✅ 推荐：溯字 SOZEER —— 源码开放，个人免费，商用授权
+❌ 避免：溯字 SOZEER 是开源软件
+```
+
+**为什么在意这个区别**：错误宣传"开源"会引发社区信任问题
+（参考 HashiCorp Terraform 改 BSL 后的舆论风波）。
+诚实说明反而更容易获得理解。
+
+---
+
+## Change Date 与自动转换
+
+自 **Change Date（2030-10-16）** 起，本软件将**自动转换**为
+**Apache License, Version 2.0**。
+
+届时：
+
+- 上述商业限制**全部失效**
+- 任何人都可自由商用，无需授权、无需付费
+- 已发布的旧版本同样适用（转换条款绑定的是版本，不是用户）
+
+> ★ 这是 BSL 设计的核心善意：**商业保护有期限**。
+> 四年时间足够收回研发投入，之后回馈社区。
+
+---
+
+## 双许可（Dual License）
+
+商业使用请见 [`COMMERCIAL.md`](./COMMERCIAL.md)。
+
+简而言之：
+
+```
+GitHub 仓库（本仓库）  →  BSL 1.1（禁止商用）
+        ↓ 想商用？
+商业授权（付费）        →  商业许可证
+        ↓
+托管版（sozeer.com）    →  SaaS 订阅
+```
+
+**我们提供正规的商用渠道** —— 你不需要"绕过去"，直接买授权即可。
+
+---
+
+## 完整许可证文本
+
+### Business Source License 1.1
+
+**Terms**
+
+The Licensor hereby grants you the right to copy, modify, create derivative
+works, redistribute, and make non-production use of the Licensed Work. The
+Licensor may make an Additional Use Grant, above, permitting limited
+production use.
+
+Effective on the Change Date, or the fourth anniversary of the first publicly
+available distribution of a specific version of the Licensed Work under this
+License, whichever comes first, the Licensor hereby grants you rights under the
+terms of the Change License, and the rights granted in the paragraph above
+terminate.
+
+If your use of the Licensed Work does not comply with the requirements
+currently in effect as described in this License, you must purchase a
+commercial license from the Licensor, its affiliated entities, or authorized
+resellers, or you must refrain from using the Licensed Work.
+
+All copies of the original and modified Licensed Work, and derivative works of
+the Licensed Work, are subject to this License. This License applies separately
+for each version of the Licensed Work and the Change Date may vary for each
+version of the Licensed Work released by Licensor.
+
+You must conspicuously display this License on each original or modified copy
+of the Licensed Work. If you receive the Licensed Work in original or modified
+form from a third party, the terms and conditions set forth in this License
+apply to your use of that work.
+
+Any use of the Licensed Work in violation of this License will automatically
+terminate your rights under this License for the current and all other versions
+of the Licensed Work.
+
+This License does not grant you any right in any trademark or logo of Licensor
+or its affiliates (provided that you may use a trademark or logo of Licensor as
+expressly required by this License).
+
+**TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSED WORK IS PROVIDED ON
+AN "AS IS" BASIS. LICENSOR HEREBY DISCLAIMS ALL WARRANTIES AND CONDITIONS,
+EXPRESS OR IMPLIED, INCLUDING (WITHOUT LIMITATION) WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AND
+TITLE.**
+
+MariaDB hereby grants you permission to use this License's text to license your
+works, and to refer to it using the trademark "Business Source License", as
+long as you comply with the Covenants of Licensor in section 2 of the License
+text.
+
+---
+
+## 第三方组件
+
+本软件依赖的第三方开源组件（FastAPI、SQLAlchemy、Vue.js 等）**各自保留其原始许可证**，
+不受本许可证影响。完整清单见 `requirements.txt` 与 `apps/web2/package.json`。
+
+★ 特别注意：若你基于本软件二次开发，仍须遵守这些依赖的许可证
+（如某些组件要求保留版权声明）。
+
+---
+
+*最后更新：2026-10-16*

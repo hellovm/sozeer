@@ -1,0 +1,100 @@
+/* ============================================================================
+ * 全局基础样式（reset + 通用原子类）
+ * ★ 只放"跨页面通用"的东西；组件样式一律写在组件内（scoped）
+ * ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #app { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* ★ 主题切换过渡（只过渡颜色，避免布局抖动） */
+  transition: background-color var(--dur-base) var(--ease),
+              color var(--dur-base) var(--ease);
+}
+
+h1, h2, h3, h4, h5, h6 { margin: 0; font-weight: var(--fw-bold); line-height: var(--lh-tight); }
+p { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+a {
+  color: var(--brand-500);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease);
+}
+a:hover { color: var(--brand-600); }
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+/* ★ 无障碍：只对键盘焦点显示 outline（鼠标点击不显示，避免视觉噪音） */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+}
+
+/* 滚动条美化（Chrome/Safari/Edge） */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--gray-300);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--gray-400); background-clip: content-box; }
+
+/* ─────────────── 通用原子类（尽量少，复杂样式用组件） ─────────────── */
+
+.muted   { color: var(--text-muted); }
+.subtle  { color: var(--text-subtle); }
+.mono    { font-family: var(--font-mono); }
+.tiny    { font-size: var(--fs-xs); }
+.bold    { font-weight: var(--fw-bold); }
+
+.row     { display: flex; align-items: center; }
+.row-between { display: flex; align-items: center; justify-content: space-between; }
+.col     { display: flex; flex-direction: column; }
+.grow    { flex: 1 1 auto; min-width: 0; }
+.spacer  { flex: 1 1 auto; }
+
+.gap-1 { gap: var(--sp-1); } .gap-2 { gap: var(--sp-2); }
+.gap-3 { gap: var(--sp-3); } .gap-4 { gap: var(--sp-4); }
+.gap-5 { gap: var(--sp-5); }
+
+.mt-2 { margin-top: var(--sp-2); } .mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); } .mt-5 { margin-top: var(--sp-5); }
+
+.hidden { display: none !important; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ★ 屏幕阅读器专用（视觉隐藏但可被读屏）—— WCAG 要求 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ★ 尊重用户的"减少动效"偏好 —— WCAG 2.3.3 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

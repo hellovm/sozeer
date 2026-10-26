@@ -1,0 +1,25 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+httpx>=0.27
+gitpython>=3.1
+pydantic>=2.9
+pydantic-settings>=2.5
+python-multipart>=0.0.9
+cryptography>=42.0
+Pillow>=10.0
+
+# v0.20.1 A1：PostgreSQL 驱动（迁移后生产使用；SQLite 模式下不加载）
+psycopg[binary]>=3.2
+
+# v0.25 J0-1：队列调度（Redis）
+# ★ 未安装时 queue.py 会自动降级为"同步执行"，功能不受影响。
+#   但生产环境必须安装（否则没有排队能力）。
+#   部署：sudo bash deploy/setup_redis.sh
+redis>=5.0
+
+# v1.0-E4.11：书稿导出 DOCX/PDF（exporter.py 延迟导入——未安装时
+# txt/md/epub 导出不受影响，仅 docx/pdf 格式报"需 pip install"提示）
+python-docx>=1.1
+reportlab>=4.0
+

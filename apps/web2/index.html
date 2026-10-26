@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>溯字 SOZEER · AI 小说与短剧创作平台</title>
+<meta name="description" content="与创作主编一起，把一部小说从立项聊到成稿">
+<!-- 内联 SVG favicon（data URI），消除浏览器自动请求 /favicon.ico 的 404 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232b6cb0'/%3E%3Ctext x='16' y='22' font-size='18' text-anchor='middle' fill='white' font-family='serif'%3E溯%3C/text%3E%3C/svg%3E">
+<!-- ★ 防闪白：在 Vue 挂载前先按 localStorage 设定主题 -->
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('sozeer.theme');
+      if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* localStorage 被禁用时静默降级为亮色 */ }
+  })();
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

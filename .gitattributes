@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  .gitattributes · 溯字 SOZEER
+#
+#  ★ 为什么需要它：**换行符是跨平台协作的头号噪音源**。
+#    Windows 用 CRLF，Linux/macOS 用 LF。
+#    没有统一约定时，同一行代码在不同平台上"看起来改了但内容一样"，
+#    导致：
+#      · diff 显示整个文件被重写（实际只改了 1 行）
+#      · merge 冲突难以阅读
+#      · Shell 脚本在 Linux 上因 CRLF 报 `\r: command not found`
+#
+#  ★ 策略：**仓库里统一存 LF**，检出时按平台自动转换。
+# ═══════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────── 默认：自动检测文本文件
+* text=auto eol=lf
+
+# ─────────────────────────────── 明确指定为文本（强制 LF）
+*.py      text eol=lf
+*.ts      text eol=lf
+*.js      text eol=lf
+*.vue     text eol=lf
+*.json    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.toml    text eol=lf
+*.md      text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+*.sql     text eol=lf
+
+# ★★ Shell 脚本必须 LF —— CRLF 会导致 `bash: ./x.sh: /bin/bash^M: bad interpreter`
+*.sh      text eol=lf
+*.bash    text eol=lf
+Dockerfile text eol=lf
+*.service text eol=lf
+*.conf    text eol=lf
+
+# ★ Windows 批处理必须 CRLF（LF 会导致 cmd 执行异常）
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# ─────────────────────────────── 二进制文件（不做换行转换）
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.webp    binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.eot     binary
+
+# ★★ 注意：`.gitattributes` **不支持行内注释** —— `#` 之后的内容会被
+#   当成属性名，Git 会警告 `# is not a valid attribute name`。
+#   踩坑记录：第一版在 `.svg text eol=lf` 后面写了行内注释 → 每次 git 操作
+#   都刷 4 行警告。注释必须**独占一行**。
+*.svg     text eol=lf
+
+# ─────────────────────────────── 归档与数据文件
+*.zip     binary
+*.tar     binary
+*.gz      binary
+*.7z      binary
+*.sqlite  binary
+*.db      binary
+
+# ─────────────────────────────── 构建产物（★ 不应入库，但万一有也不 diff）
+dist/     linguist-generated=true
+*.min.js  linguist-generated=true
+*.min.css linguist-generated=true
+package-lock.json linguist-generated=true
+
+# ─────────────────────────────── 文档统计排除（避免"代码量"虚高）
+docs/     linguist-documentation=true
+*.md      linguist-documentation=true
+LICENSE   linguist-documentation=true
+CHANGELOG.md linguist-documentation=true
+SECURITY.md  linguist-documentation=true
+
+# ─────────────────────────────── Git 仓库内的书籍数据（★ 绝不入库）
+data/     export-ignore
+invoices/ export-ignore
+.tmp*/    export-ignore

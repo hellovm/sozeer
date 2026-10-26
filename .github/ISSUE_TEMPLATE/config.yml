@@ -1,0 +1,12 @@
+# ★ 引导用户走正确渠道，减少无效 Issue
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 报告安全漏洞
+    url: https://github.com/OWNER/REPO/security/advisories/new
+    about: 安全漏洞请勿开公开 Issue —— 请用私密渠道（见 SECURITY.md）
+  - name: 💬 提问与讨论
+    url: https://github.com/OWNER/REPO/discussions
+    about: 使用疑问、经验分享、想法探讨请走 Discussions
+  - name: 💰 商业授权咨询
+    url: https://sozeer.com/pricing
+    about: 商用授权、SaaS 部署、OEM 合作
