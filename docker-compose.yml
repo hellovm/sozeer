@@ -1,0 +1,38 @@
+services:
+  novelforge:
+    build: .
+    container_name: novelforge
+    ports:
+      - "8000:8000"
+    environment:
+      NOVELFORGE_DATA: /app/data
+      NOVELFORGE_HOST: 0.0.0.0
+      NOVELFORGE_PORT: 8000
+      # 单用户内网自用，SQLite 足够。想换 Postgres（多租户方向）：
+      #   ① 取消下面 postgres 服务的注释
+      #   ② 把 NOVELFORGE_DB_URL 指向它，密码用**你自己设的强密码**
+      #
+      # ★★ 注意：**不要照抄用户名当密码**。
+      #   下面用 ${NF_DB_PASSWORD} 从环境变量取，避免把密码写进仓库。
+      #   使用前先：export NF_DB_PASSWORD='你的强密码'（或写到 .env）
+      # NOVELFORGE_DB_URL: postgresql+psycopg://novelforge:${NF_DB_PASSWORD}@postgres:5432/novelforge
+    volumes:
+      - nf-data:/app/data          # 数据库 + 每本书的 Git 仓库
+    restart: unless-stopped
+
+  # 多租户阶段再启用（★ 记得用强密码，不要留默认值）：
+  # postgres:
+  #   image: pgvector/pgvector:pg16
+  #   environment:
+  #     POSTGRES_USER: novelforge
+  #     # ★★ 密码从环境变量读，绝不在仓库里写死。
+  #     #    生产环境请用 secrets 管理（Docker secrets / K8s Secret）。
+  #     POSTGRES_PASSWORD: ${NF_DB_PASSWORD:?请先设置 NF_DB_PASSWORD 环境变量}
+  #     POSTGRES_DB: novelforge
+  #   volumes:
+  #     - nf-pg:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+volumes:
+  nf-data:
+  # nf-pg:

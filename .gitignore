@@ -1,0 +1,126 @@
+# ═══════════════════════════════════════════════════════════════
+#  .gitignore · 溯字 SOZEER
+#
+#  ★★ 开源准备（v1.0 E3）—— 这份文件的首要职责是**防止泄密**：
+#     一旦 push 上去，即使立刻删除，fork / 缓存 / 搜索引擎也可能留有副本。
+#     所以宁可多排除，不可少排除。
+# ═══════════════════════════════════════════════════════════════
+
+# ───────────────────────────────── 密钥与配置（★★★ 最高优先级）
+# 任何含密钥的文件都必须在这里。.env.example 是唯一例外（只含占位符）。
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
+credentials.json
+service-account*.json
+
+# 部署目标主机（生产 IP/回滚机/内网设备，★ v1.0-E4.22 开源脱敏）
+# 模板见 deploy/_hosts.py；此文件只写真实值，永不入库
+deploy/local.conf
+
+# ───────────────────────────────── 用户数据（★ 绝不入库）
+# 小说正文、书籍 Git 仓库、媒体产物、上传文件
+# ★ 前导斜杠只锁根目录运行时数据；不带斜杠的 data/ 会误伤
+#   apps/web2/src/views/data/（UsageView/StatsView 源码，E4.19 发现被静默排除）
+/data/
+booksfiles/
+uploads/
+media/
+
+# 发票与财务数据（含真实抬头/税号，属个人信息）
+invoices/
+
+# ───────────────────────────────── 运行产物
+logs/
+*.log
+*.pid
+*.sock
+.tmp/
+.tmp_*/
+tmp/
+cache/
+
+# 数据库文件（本地开发用；生产是 PostgreSQL）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+
+# ───────────────────────────────── 前端
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ★ 前端构建产物：由 CI / 部署时构建，不进版本库
+#   （app2 是构建输出目录，含 hash 文件名，提交它会让 diff 噪音巨大）
+apps/api/static/app2/
+
+# ───────────────────────────────── Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+.python-version
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# ───────────────────────────────── 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ───────────────────────────────── 报告与临时输出
+# ★ 商用检测报告含疑似商用站点信息 —— 属内部资料，不入公开仓库
+reports/
+
+# ───────────────────────────────── 备份（含完整代码快照，体积大）
+backups/
+*.tar.gz
+*.tgz
+*.zip
+!deploy/dist/*.tar.gz
+
+# ───────────────────────────────── 其他
+*.bak
+*.orig
+*.rej
+.workbuddy/

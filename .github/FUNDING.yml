@@ -1,0 +1,7 @@
+# 赞助 / 捐赠渠道（驱动仓库右侧 Sponsor 按钮）
+# 国内首选：爱发电（一个链接支持 微信 / 支付宝 / 云闪付）
+custom:
+  - "https://afdian.com/a/hellovm"
+# 海外用户可选：需先在 https://github.com/sponsors 开通（大陆收款有限）
+github:
+  - hellovm
