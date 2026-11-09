@@ -32,10 +32,30 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt pytest
 
+      # ★ 先构建前端，让 apps/api/static/app2 在测试前就位。
+      #
+      #   ★★ 为什么必须：`apps/api/static/app2/` 被 .gitignore 排除（前端构建
+      #     产物），CI checkout 后**该目录永远不存在**。而主域名 / 静态文件 /
+      #     SPA 回退等测试依赖它——缺它会让这批用例在「无前端产物 + Linux 2 核」
+      #     下**间歇性失败（flaky）**（本地 3 轮 1/1/0 复现），生产部署因 build
+      #     过 app2 才正常。让 CI 测试环境与生产对齐：pytest 前 build。
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web2/package-lock.json
+
+      - name: 构建前端（生成 apps/api/static/app2）
+        working-directory: apps/web2
+        run: npm ci --no-audit --no-fund && npm run build:only
+
       - name: 全量测试
         # ★ 关闭后台 worker（避免测试污染，见项目 MEMORY §62）
+        # ★ 无真实 Redis（skipif 会自动跳过 redis 用例，保持 CI 确定）
         env:
           NOVELFORGE_DISABLE_WORKERS: "1"
+          NF_REDIS_DISABLE: "1"
         run: pytest tests/ --ignore=tests/test_import.py -q
 
   frontend:
