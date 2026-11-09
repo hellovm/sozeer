@@ -1,0 +1,64 @@
+# 个人版 CI（由 deploy/make_opensource.py 生成）
+#
+# ★ 精简自商业版 build.yml：个人版树没有 deploy/、docs/、COMMERCIAL.md，
+#   故只保留「全量测试 + 前端类型检查/构建」两条可用、且会真实通过的流水线。
+#   触发含 push main → 推送即触发首次 CI 运行。
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "22"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt pytest
+
+      - name: 全量测试
+        # ★ 关闭后台 worker（避免测试污染，见项目 MEMORY §62）
+        env:
+          NOVELFORGE_DISABLE_WORKERS: "1"
+        run: pytest tests/ --ignore=tests/test_import.py -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web2/package-lock.json
+
+      - name: 安装依赖
+        working-directory: apps/web2
+        run: npm ci --no-audit --no-fund
+
+      - name: 类型检查
+        # ★ 铁律：tsc 零错误（类型错会以运行时白屏暴露）
+        working-directory: apps/web2
+        run: npx vue-tsc --noEmit
+
+      - name: 构建验证
+        working-directory: apps/web2
+        run: npm run build:only

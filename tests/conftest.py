@@ -57,6 +57,8 @@ import pytest as _personal_pytest
 _PERSONAL_SKIP_CASES = {
     'tests/test_e4_10_ci_audit.py::TestCiGate::test_smoke_disables_ratelimit',
     'tests/test_e4_10_ci_audit.py::TestCiGate::test_smoke_script_runnable_offline',
+    'tests/test_e4_10_ci_audit.py::TestCiGate::test_smoke_step_in_test_job',
+    'tests/test_e4_10_ci_audit.py::TestCiGate::test_workflow_has_smoke_step',
     'tests/test_e4_10_ci_audit.py::TestCriticalImports::test_ingest_py_imports',
     'tests/test_e4_10_ci_audit.py::TestCriticalImports::test_no_deferred_models_import_in_ingest',
     'tests/test_e4_10_ci_audit.py::TestDualModeRobustness::test_schema_generation_not_http',
