@@ -44,3 +44,82 @@ collect_ignore_glob = ["test_import.py"]
 # ★ 与 MEMORY §62「测试模块实例分裂」同源：全局单例 + 多测试 = 必须显式隔离
 os.environ["NOVELFORGE_DISABLE_WORKERS"] = "1"
 
+
+
+# ────────────────────────────────────────────────────────────────
+# ★ 个人版专属：skip 依赖已剥离资源（deploy/ 运维脚本、旧前台 apps/web、
+#   商业 pay/credits/queue/plans 端点、cloud_video、队列前端等）的商业用例。
+#   这些用例在个人版无意义且必失败，但同文件仍有大量有效通用用例，故按用例
+#   粒度 skip 而非整删文件。由 deploy/make_opensource.py 生成，请勿手改清单
+#   （如需增删，请改生成脚本的 PERSONAL_SKIP_CASES 后重新生成）。
+import pytest as _personal_pytest
+
+_PERSONAL_SKIP_CASES = {
+    'tests/test_e4_10_ci_audit.py::TestCiGate::test_smoke_disables_ratelimit',
+    'tests/test_e4_10_ci_audit.py::TestCiGate::test_smoke_script_runnable_offline',
+    'tests/test_e4_10_ci_audit.py::TestCriticalImports::test_ingest_py_imports',
+    'tests/test_e4_10_ci_audit.py::TestCriticalImports::test_no_deferred_models_import_in_ingest',
+    'tests/test_e4_10_ci_audit.py::TestDualModeRobustness::test_schema_generation_not_http',
+    'tests/test_e4_10_ci_audit.py::TestDualModeRobustness::test_sys_path_has_cwd_fallback',
+    'tests/test_e4_10_ci_audit.py::TestDualModeRobustness::test_uses_module_level_urllib',
+    'tests/test_e4_10_ci_audit.py::TestImportAudit::test_current_code_clean',
+    'tests/test_e4_10_ci_audit.py::TestImportAudit::test_four_checks_implemented',
+    'tests/test_e4_10_ci_audit.py::TestImportAudit::test_script_exists',
+    'tests/test_e4_10_ci_audit.py::TestImportAudit::test_script_syntax',
+    'tests/test_e4_10_ci_audit.py::TestImportAudit::test_skips_try_blocks',
+    'tests/test_e4_10_ci_audit.py::TestImportAudit::test_uses_symtable',
+    'tests/test_e4_11_p0p1.py::test_media_dispatches_cloud_video_provider',
+    'tests/test_e4_11_p0p1.py::test_media_skip_billing_for_free_cloud_channel',
+    'tests/test_e4_11_p0p1.py::test_plans_endpoints_use_config_update_not_model_manage',
+    'tests/test_e4_16_polish.py::test_fix_brand_rename_script_idempotent_shape',
+    'tests/test_e4_16_polish.py::test_footer_has_version_and_layout_has_pricing_route',
+    'tests/test_e4_4_config_ux.py::TestImportsResolvable::test_all_admin_routers_import',
+    'tests/test_e4_4_config_ux.py::TestImportsResolvable::test_pay_router_imports',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_cred_specs_single_source',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_creds_encrypted',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_creds_not_echoed',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_dangerous_flag_needs_confirmation',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_empty_cred_means_no_change',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_must_have_creds_before_enable',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_public_providers_filters_disabled',
+    'tests/test_e4_4_config_ux.py::TestPaymentChannels::test_write_endpoints_exist',
+    'tests/test_e4_9_endpoint_smoke.py::TestExceptionHandlers::test_validation_error_still_422',
+    'tests/test_e4_9_endpoint_smoke.py::TestSmokeScript::test_script_exists',
+    'tests/test_e4_9_endpoint_smoke.py::TestSmokeScript::test_script_syntax',
+    'tests/test_v027_main_domain.py::test_api_not_shadowed_by_catch_all',
+    'tests/test_v027_main_domain.py::test_path_traversal_blocked',
+    'tests/test_v180_t1_split.py::test_route_count_unchanged',
+    'tests/test_v180_t1_split.py::test_routers_modules_exist',
+    'tests/test_v190_stability.py::test_backup_retention',
+    'tests/test_v190_stability.py::test_backup_script_has_safety',
+    'tests/test_v190_stability.py::test_backup_script_runs',
+    'tests/test_v190_stability.py::test_backup_script_syntax',
+    'tests/test_v190_stability.py::test_backup_scripts_exist',
+    'tests/test_v190_stability.py::test_logrotate_config_exists',
+    'tests/test_v190_stability.py::test_restore_script_backs_up_before_overwrite',
+    'tests/test_v208_admin_ws.py::test_bulk_adjust_credits',
+    'tests/test_v208_admin_ws.py::test_me_plan_free_for_new',
+    'tests/test_v208_admin_ws.py::test_me_usage_has_new_fields',
+    'tests/test_v209_admin_security.py::test_credit_adjust_writes_audit_with_diff',
+    'tests/test_v209_admin_security.py::test_pay_events_filter_and_total',
+    'tests/test_v209_admin_security.py::test_pay_events_raw_returns_raw_body',
+    'tests/test_v209_admin_security.py::test_refund_writes_audit_with_before_snapshot',
+    'tests/test_v254_config.py::TestEnvFileSafety::test_deploy_runs_both_fixes',
+    'tests/test_v254_config.py::TestEnvFileSafety::test_key_migration_script_exists',
+    'tests/test_v254_config.py::TestEnvFileSafety::test_quoting_fixer_script_exists',
+    'tests/test_v256_queue_concurrency.py::test_admin_has_queue_page',
+    'tests/test_v256_queue_concurrency.py::test_user_frontend_has_queue_watch',
+    'tests/test_v25_queue.py::test_setup_script_exists',
+    'tests/test_v25_queue.py::test_setup_script_has_safety_configs',
+    'tests/test_v25_queue.py::test_setup_script_idempotent_marker',
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    _n = 0
+    for it in items:
+        _base = it.nodeid.split("[", 1)[0]
+        if _base in _PERSONAL_SKIP_CASES:
+            it.add_marker(_personal_pytest.mark.skip(
+                reason="个人版已剥离该用例依赖的商业/运维资源"))
+            _n += 1
