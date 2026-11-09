@@ -147,7 +147,7 @@ def get_config(db: Session | None, key: str, default: Any = None) -> Any:
         raw = _raw(db, k) if db is not None else None
         return raw if raw is not None else default
 
-    # 1) 缓存
+    # 1) 缓存（快路径；★ 只缓存"DB 真实值"，见末尾写入处说明）
     ck = f"{k}"
     nowt = time.time()
     with _cache_lock:
@@ -158,7 +158,8 @@ def get_config(db: Session | None, key: str, default: Any = None) -> Any:
     val = None
     # 2) DB
     raw = _raw(db, k) if db is not None else None
-    if raw is not None and raw != "":
+    from_db = raw is not None and raw != ""
+    if from_db:
         val = raw
     # 3) 环境变量
     if val is None:
@@ -175,8 +176,15 @@ def get_config(db: Session | None, key: str, default: Any = None) -> Any:
                      k, val, e, spec.default)
         out = spec.default
 
-    with _cache_lock:
-        _cache[ck] = (nowt, out)
+    # ★ 只把"DB 真实值"写进缓存。走 env/default 兜底（DB 没配过 / db=None）时
+    #   **不缓存**：兜底值（如 default=0）不代表 DB 配置，缓存它会让后续 DB 路径
+    #   在 TTL 内读到陈旧的 0。本项目多个测试用 importlib.reload 触发模块分裂，
+    #   不同 config_center 实例的缓存互不清理，0 会跨实例残留 → global_cap 误读 0
+    #   → 全站保命开关失效（CI 全量 test_guard_respects_global_cap 间歇红灯的根因）。
+    #   兜底值随时可变（env/代码默认），本就不该进缓存。
+    if from_db:
+        with _cache_lock:
+            _cache[ck] = (nowt, out)
     return out
 
 
