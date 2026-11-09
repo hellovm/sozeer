@@ -478,6 +478,11 @@ def test_guard_respects_global_cap(db):
     # 造全站用量
     cc.set_config(db, "cost.global_daily_cap", 100, operator="t",
                   reason="测试保命开关")
+    # ★ CI flaky 修复：显式清缓存 + 刷新 session 身份映射，
+    #   消除「set_config 内部 get_config 重新填充缓存 / 跨测试顺序依赖」
+    #   导致的 global_cap 偶发读到旧值 0 → guard 不拦 → allowed=True。
+    cc.cache_clear()
+    db.expire_all()
     now_naive = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     for i in range(3):
         db.add(LLMCall(id=f"lc_gc_{uuid.uuid4().hex[:8]}", task="t",
