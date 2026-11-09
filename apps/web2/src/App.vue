@@ -18,7 +18,7 @@ const ui = useUiStore()
 
 let offs: Array<() => void> = []
 
-
+onMounted(() => {
   // ★ 会话失效 → 清态 + 跳登录（只在这里跳，http 层不直接操作路由）
   offs.push(bus.on(EVT.AUTH_EXPIRED, () => {
     auth.clearSession()
