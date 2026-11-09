@@ -25,6 +25,17 @@ os.environ.setdefault("NOVELFORGE_SECRET", "test-secret-for-pytest-only")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_shared_db():
+    """★ 模块级隔离：进入本文件前 drop 并重建共享库，消除跨文件数据残留/主键冲突
+    （本文件 50+ 固定主键、无清理，靠此隔离避免污染其他文件 / 顺序敏感断言）。
+    用 tmp_path 独立库的用例不受影响（drop 只作用于共享 engine）。"""
+    from apps.api.db import Base, engine
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield
+
+
 # ---------------------------------------------------------------- keyvault
 def test_keyvault_roundtrip():
     from apps.api import keyvault

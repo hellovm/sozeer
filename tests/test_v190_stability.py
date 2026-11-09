@@ -24,6 +24,16 @@ os.environ.setdefault("NOVELFORGE_SECRET", "test-secret-v19")
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_shared_db():
+    """★ 模块级隔离：进入本文件前 drop 并重建共享库，消除跨文件数据残留/主键冲突
+    （如 c1 被 test_v140 残留导致 IntegrityError）。本文件内用例间数据保留。"""
+    from apps.api.db import Base, engine
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield
+
+
 # ============================================================ S1 备份
 def test_backup_scripts_exist():
     for f in ("backup_db.sh", "restore_db.sh",
@@ -307,11 +317,13 @@ def test_sync_characters_updates_mentions():
         db.execute(delete(Character).where(Character.book_id == "bk_ch_s4b"))
         db.execute(delete(Book).where(Book.id == "bk_ch_s4b")); db.commit()
         db.add(Book(id="bk_ch_s4b", title="人物2", owner_id="u1")); db.commit()
-        db.add(Character(id="c1", book_id="bk_ch_s4b", name="王大力", mentions=1))
+        import uuid
+        _cid = f"c1_{uuid.uuid4().hex[:8]}"
+        db.add(Character(id=_cid, book_id="bk_ch_s4b", name="王大力", mentions=1))
         db.commit()
         r = C.sync_characters(db, "bk_ch_s4b", "王大力来了。王大力走了。王大力笑了。", ch_idx=2)
         assert "王大力" in r["updated"], f"未累加：{r}"
-        row = db.get(Character, "c1")
+        row = db.get(Character, _cid)
         assert int(row.mentions) > 1
 
 

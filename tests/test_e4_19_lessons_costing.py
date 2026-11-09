@@ -177,7 +177,9 @@ def test_record_lesson_requires_both_conditions(db):
         fix_text="好的，我来重写第3章") is True
     assert db.query(_mod("models").GenLesson).count() == n0 + 1
 
-    r = db.query(_mod("models").GenLesson).order_by(
+    # ★ 限定到本用例的 book_id（bid 是 uuid）—— 全局 .first() 会被其他残留行顶掉（顺序依赖）
+    r = db.query(_mod("models").GenLesson).filter(
+        _mod("models").GenLesson.book_id == bid).order_by(
         _mod("models").GenLesson.created_at.desc()).first()
     assert r.trigger == "不对，主角不该叫师姐"
     assert r.tools == "draft_chapter"          # read_chapter 被过滤掉

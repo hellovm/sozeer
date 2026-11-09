@@ -25,6 +25,16 @@ os.environ.setdefault("NOVELFORGE_SECRET", "test-secret-for-pytest-only")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_shared_db():
+    """★ 模块级隔离：进入本文件前 drop 并重建共享库，消除跨文件数据残留/主键冲突
+    （如固定 id 被前一文件残留导致 IntegrityError）。本文件内用例间数据保留。"""
+    from apps.api.db import Base, engine
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield
+
+
 @pytest.fixture()
 def db():
     from apps.api.db import Base, engine, SessionLocal
@@ -78,7 +88,8 @@ def test_index_and_search_roundtrip(db, book):
     from apps.api import memory
     from apps.api.models import Character, Chapter
     # 登记一个人物并写两章：第1章埋信物，第10章再提
-    db.add(Character(id="c1", book_id=book.id, name="陈长安"))
+    import uuid
+    db.add(Character(id=f"c1_{uuid.uuid4().hex[:8]}", book_id=book.id, name="陈长安"))
     c1 = "# 第001章 得宝\n\n" + "陈长安在坊市得到了一枚玄天令，令牌背面刻着古老的符文。" * 8
     c10 = "# 第010章 再临坊市\n\n" + "陈长安再次来到坊市，摸了摸怀里的玄天令。" * 8
     db.add(Chapter(id="ch1", book_id=book.id, idx=1, title="得宝", content=c1))

@@ -57,7 +57,7 @@ async def act(
     """
     payload: dict[str, Any] = {
         "model": p.model_id,
-        "messages": messages,
+        "messages": _normalize_system_messages(messages),   # ★ 系统消息归一化（多/中途 system 根治）
         "temperature": p.temperature if temperature is None else temperature,
         "max_tokens": max_tokens or p.max_tokens,
         "tools": tools,
@@ -104,6 +104,36 @@ async def act(
 
 class LLMError(RuntimeError):
     pass
+
+
+def _normalize_system_messages(messages: list[dict]) -> list[dict]:
+    """★ 归一化系统消息：把**所有** system 内容合并为单条置于 messages[0]。
+
+    为什么必须做：agent.py 的 chat_stream 会在开头放多条 system（角色/状态/
+    题材/避坑经验），nudge 补救路径还会在 assistant 之后追加**中途 system**。
+    严格的 OpenAI 兼容网关（sozeer.com 线上某模型端点）会因「system 未全部置于
+    最前 / 出现多 system」直接报 `System message must be at the beginning` 拒收。
+
+    归一化规则（对 OpenAI 等宽松网关无害、幂等）：
+      · 收集全部 system 的 content（原顺序），用空行合并成单条，放到最前；
+      · 其余非 system 消息（user/assistant/tool/…）保持原顺序。
+    中途 system 的内容会并入开头的 system 块，位置语义对「指令型 system」无损
+    （模型在整段 system 里照样读得到），同时彻底消除"system 不在最前"的报错。
+    """
+    sys_parts: list[str] = []
+    rest: list[dict] = []
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") == "system":
+            c = m.get("content")
+            if c:
+                sys_parts.append(c if isinstance(c, str) else str(c))
+        else:
+            rest.append(m)
+    if not sys_parts:
+        return list(messages or [])
+    out: list[dict] = [{"role": "system", "content": "\n\n".join(sys_parts)}]
+    out.extend(rest)
+    return out
 
 
 def _headers(p: ModelProfile) -> dict[str, str]:
@@ -235,7 +265,7 @@ async def _complete_once(
 ) -> LLMResult:
     payload: dict[str, Any] = {
         "model": p.model_id,
-        "messages": messages,
+        "messages": _normalize_system_messages(messages),   # ★ 系统消息归一化
         "temperature": p.temperature if temperature is None else temperature,
         "max_tokens": max_tokens or p.max_tokens,
         "stream": False,
@@ -312,7 +342,7 @@ async def stream(
     """按 SSE 增量产出文本。"""
     payload: dict[str, Any] = {
         "model": p.model_id,
-        "messages": messages,
+        "messages": _normalize_system_messages(messages),   # ★ 系统消息归一化
         "temperature": p.temperature if temperature is None else temperature,
         "max_tokens": max_tokens or p.max_tokens,
         "stream": True,
@@ -371,7 +401,7 @@ async def stream_usage(
     """
     payload: dict[str, Any] = {
         "model": p.model_id,
-        "messages": messages,
+        "messages": _normalize_system_messages(messages),   # ★ 系统消息归一化
         "temperature": p.temperature if temperature is None else temperature,
         "max_tokens": max_tokens or p.max_tokens,
         "stream": True,
@@ -474,7 +504,7 @@ async def act_stream(
     """
     payload: dict[str, Any] = {
         "model": p.model_id,
-        "messages": messages,
+        "messages": _normalize_system_messages(messages),   # ★ 系统消息归一化
         "temperature": p.temperature if temperature is None else temperature,
         "max_tokens": max_tokens or p.max_tokens,
         "tools": tools,

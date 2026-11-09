@@ -1673,8 +1673,13 @@ async def chat_stream(db, book_id: str, message: str, history: list[dict], emit)
             await emit({"kind": "stage",
                         "text": f"检测到你说了要做但系统里没有产物，正在要求真正执行"
                                 f"（第 {nudge_used}/{MAX_NUDGE_ROUNDS} 次）…"})
+            # ★ v0.26.3 根治「System message must be at the beginning」：
+            #   nudge 补救**不得**再发中途 system（严格 OpenAI 兼容网关拒收
+            #   "system 不在最前"）。改用 user 角色，且紧跟在上一条未落地的
+            #   assistant 回复之后，位置语义不变。同时 llm.py 各入口已统一把
+            #   开头多条 system 合并为单条置最前，双保险。
             msgs.append({"role": "assistant", "content": final_text or ""})
-            msgs.append({"role": "system", "content":
+            msgs.append({"role": "user", "content":
                          "⚠️ **系统检测到你又只说了没做**。\n\n"
                          "你刚才的回复里表达要做某事（起草/生成/重写/读取/核对/写入…），"
                          "但这一轮**没有产生任何工具调用**，所以：\n"

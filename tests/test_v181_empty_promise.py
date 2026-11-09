@@ -121,7 +121,15 @@ def test_nudge_sends_system_reminder():
     i = src.index("_need_nudge")           # v0.19.4：锚点跟实现走
     seg = src[i:i + 2500]
     assert "draft_chapter" in seg, "提醒里应点名 draft_chapter"
-    assert '"role": "system"' in seg or "'role': 'system'" in seg
+    # ★ v0.26.3：nudge 补救**不得**再发中途 system（严格 OpenAI 兼容网关报
+    #   "System message must be at the beginning"）。改用 user 角色且紧跟
+    #   上一条未落地的 assistant 回复。故断言的是「系统提醒文案」这个性质，
+    #   而不再绑死 role 字符串（文案才是唯一可靠锚点，注释里的旧 role 会误导）。
+    assert "系统检测到你又只说了没做" in seg, "补救时须给模型明确的系统级提醒"
+    # 同时确认 nudge 段内不再出现中途 system 追加（"assistant" 之后紧跟 user）
+    import re as _re
+    _after = seg[seg.index("系统检测到你又只说了没做"):]
+    assert '"role": "system"' not in _after, "中途 system 已被 v0.26.3 移除"
 
 
 # ==================================================== prompt 约束
