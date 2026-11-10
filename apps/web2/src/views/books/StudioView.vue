@@ -51,6 +51,24 @@ const streamText = ref('')
 /** 当前生成任务 */
 const taskId = ref('')
 
+/**
+ * ★ #61 对话框内 agent/skill 调用与流式进度：
+ *   agent 在流式过程中读章 / 改设定 / 跑审计 / 代笔…… 这些**过程事件**
+ *   之前只落库不展示，用户只看到"正在思考…"。这里把它们做成一个
+ *   可折叠的「过程」活动流，实时显示在对话流下方。
+ */
+interface ActivityItem { icon: string; text: string }
+const streamActions = ref<ActivityItem[]>([])
+/** ★ 旧实现把全部过程吞掉；留最近 40 条防长任务刷屏 */
+const ACTION_CAP = 40
+/** action type → 图标（可读化 agent 在做什么） */
+const ACTION_ICON: Record<string, string> = {
+  read: '📖', rename: '✏️', character: '👤', character_delete: '🗑',
+  world: '🌐', outline: '🧭', foreshadow: '🔗', timeline: '📅',
+  ledger: '⚖️', consistency: '🔍', audit: '🩺', drama: '🎬',
+  meta: '🏷️', duration_estimate: '⏱', drama_script: '📝',
+}
+
 /** ★ 待审草稿（v0.14.10：后台常驻，聊天流找不到草稿卡时的入口） */
 const pendingDrafts = ref<PendingDraft[]>([])
 const draftsLoading = ref(false)
@@ -116,6 +134,17 @@ async function loadState() {
   } catch { /* ignore */ } finally {
     stateLoading.value = false
   }
+}
+
+/**
+ * ★ #305/#310：agent 在**流式过程中**改人物/世界观/大纲/伏笔等（action 事件）
+ *   → 去抖后后台重拉设定栏，右栏随之即时更新；一次任务可能连发多条，
+ *   合并成一次（400ms 窗口），避免打爆后端。fail-soft，不阻断主流程。
+ */
+let stateRefreshTimer: number | undefined
+function scheduleStateRefresh() {
+  clearTimeout(stateRefreshTimer)
+  stateRefreshTimer = window.setTimeout(() => { void loadState() }, 400)
 }
 
 async function loadChat() {
@@ -246,6 +275,7 @@ async function onSend(text: string) {
     const r = await bookApi.chat(bookId.value, text, convId.value, messages.value)
     convId.value = r.conversation_id || convId.value
     taskId.value = r.task_id
+    streamActions.value = []   // ★ #61 新一轮：清空过程活动流
     // ★ 消费事件流（刷新后续上）
     await stream.start(bookApi.taskStreamUrl(bookId.value, r.task_id, 0))
   } catch (e) {
@@ -263,6 +293,39 @@ function onStreamEvent(ev: StreamEvent) {
   } else if (kind === 'chapter_draft' || (kind === 'task' && ev.status === 'done')) {
     // ★ 草稿生成完成（或代笔任务 done）：待审区即时亮起，不必等流结束
     void loadPendingDrafts()
+  } else if (kind === 'action') {
+    // ★ #61：把 agent 调用（读章/改设定/审计/代笔…）实时做进「过程」活动流。
+    const type = String(ev.type || '')
+    const label = String(ev.text || ev.summary || '')
+    if (label) {
+      streamActions.value = [
+        ...streamActions.value,
+        { icon: ACTION_ICON[type] || '·', text: label },
+      ].slice(-ACTION_CAP)
+    }
+    // ★ #305/#310：agent 在**流式过程中**改了章节/设定 → 相应面板即时刷新，
+    //   不必等任务结束（onDone → refreshAfterTask）才更新。之前这里对 action
+    //   事件整体忽略，「改完章节标题、左边章节树还显示旧名」就是由此而来。
+    if (type === 'rename') {
+      // 章节改名：用事件里带的新 title **原地**更新章节树（不闪骨架屏）。
+      const chIdx = Number(ev.ch_idx)
+      const newTitle = String(ev.title || '')
+      const hit = chIdx ? chapters.value.find(c => c.idx === chIdx) : undefined
+      if (hit && newTitle) {
+        hit.title = newTitle   // 当前章若正在编辑，编辑器有自己的 chapter ref，离开时重拉会同步
+      } else {
+        void loadChapters()   // 兜底：该章不在列表 / 事件未带 title → 全量重拉
+      }
+    } else if (type === 'character' || type === 'character_delete'
+               || type === 'world' || type === 'outline' || type === 'foreshadow') {
+      // 设定类变更（人物/世界观/大纲/伏笔）→ 去抖重拉右栏设定，即时可见
+      scheduleStateRefresh()
+    } else if (type === 'meta') {
+      // 立项信息（书名/题材/标签）→ 顶部栏书名即时更新
+      void loadBook()
+    }
+    // 其余 action（read/audit/consistency/timeline/ledger/drama/duration_estimate/
+    // drama_script）不改章节树或设定栏，忽略（task 结束时 refreshAfterTask 兜底）
   }
 }
 
@@ -388,6 +451,7 @@ watch(pendingDrafts, (list) => {
         :streaming="generating"
         :loading="chatLoading"
         :stream-text="streamText"
+        :actions="streamActions"
         :disabled="!convId"
         @send="onSend"
         @stop="onStop"

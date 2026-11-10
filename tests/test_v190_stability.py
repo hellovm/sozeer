@@ -402,6 +402,47 @@ def test_agent_rename_chapter_missing_chapter():
         db.execute(delete(Book).where(Book.id == "bk_ren2")); db.commit()
 
 
+def test_agent_rename_chapter_event_carries_new_title():
+    """★ #305/#310：rename 事件必须带上新的 title（"title" 字段），
+    前端章节树才能在流式过程中**原地即时**刷新（不必等任务结束全量重拉）。
+
+    复现 #305「改章节标题后清单不更新」：旧实现 rename 事件只有 ch_idx +
+    summary，StudioView.onStreamEvent 对 action 事件整体忽略 → 改完名章节树
+    仍显示旧标题。本用例锁定「事件带 title」这一前后端契约。
+    """
+    import asyncio
+    from apps.api import main
+    from apps.api import agent as agent_mod
+    from apps.api.models import Book, Chapter
+    from sqlalchemy import delete, select
+
+    events: list[dict] = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    with main.SessionLocal() as db:
+        db.execute(delete(Chapter).where(Chapter.book_id == "bk_ren3"))
+        db.execute(delete(Book).where(Book.id == "bk_ren3")); db.commit()
+        db.add(Book(id="bk_ren3", title="改名书3", owner_id="u1"))
+        db.add(Chapter(id="ch_ren3", book_id="bk_ren3", idx=5,
+                       title="旧标题", status="final", content="正文"))
+        db.commit()
+        book = db.get(Book, "bk_ren3")
+        asyncio.run(agent_mod._t_rename_chapter(
+            db, book, {"ch_idx": 5, "title": "新标题"}, emit))
+        db.execute(delete(Chapter).where(Chapter.book_id == "bk_ren3"))
+        db.execute(delete(Book).where(Book.id == "bk_ren3")); db.commit()
+
+    renames = [e for e in events if e.get("kind") == "action"
+               and e.get("type") == "rename"]
+    assert renames, f"缺少 rename action 事件：{events}"
+    ev = renames[0]
+    assert ev.get("ch_idx") == 5, f"ch_idx 缺失/错误：{ev}"
+    # ★ 契约核心：事件带新 title（前端原地刷新章节树依赖它）
+    assert ev.get("title") == "新标题", f"rename 事件未带新 title：{ev}"
+
+
 # ============================================================ #311 删除人物工具 + 端点
 def test_agent_delete_character_removes():
     """★ #311：delete_character 工具要真删，不要只口头标记「误入库·待删除」。"""

@@ -142,6 +142,16 @@ export const settingApi = {
       `/api/books/${encodeURIComponent(bookId)}/memory/reindex`, {})
   },
 
+  /**
+   * ★ #60 全书审计（后台任务 + 逐章流式进度）。
+   * 后端逐章跑七维审计并落库，返回 task_id；前端据此挂
+   * /tasks/{task_id}/stream 看实时进度（刷新可从 /tasks 恢复）。
+   */
+  auditBook(bookId: string) {
+    return http.post<{ task_id: string; status: string; progress: string }>(
+      `/api/books/${encodeURIComponent(bookId)}/audit-book`, {})
+  },
+
   /** 伏笔列表 */
   foreshadows(bookId: string) {
     return http.get<{ items: Array<{ id: string; content: string; status: string

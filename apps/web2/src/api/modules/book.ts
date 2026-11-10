@@ -186,6 +186,33 @@ export interface QueuedResponse {
   limits?: Record<string, unknown>
 }
 
+/** ★ F2 整书打包（.nfbook）—— inspect 预检结果 */
+export interface PackInspectResult {
+  ok: boolean
+  error?: string
+  /** 预检通过时返回 manifest（magic / format_version / stats…） */
+  manifest?: {
+    magic: string
+    format_version: number
+    exported_at?: string
+    book_id?: string
+    book_title?: string
+    stats?: Record<string, number>
+  }
+  entries?: number
+  compatible?: boolean
+}
+
+/** ★ F2 整书导入结果（copy=新 id / merge=沿用原 id） */
+export interface PackImportResult {
+  ok: boolean
+  book_id: string
+  title: string
+  mode: string
+  /** 各表实际导入条数 */
+  imported?: Record<string, number>
+}
+
 /* ─────────────────────────── API ─────────────────────────── */
 
 export const bookApi = {
@@ -217,6 +244,37 @@ export const bookApi = {
   exportBook(bookId: string, fmt: string) {
     return http.download(
       `/api/books/${encodeURIComponent(bookId)}/export`, { fmt })
+  },
+
+  /**
+   * ★ F2 整书打包导出（.nfbook = ZIP 机器可还原快照，含设定/大纲/人物/伏笔/
+   *   纪年表/账本/短剧工程/原始文件）。与 exportBook（给人读的 txt/md/epub）
+   *   不同，这是「换服务器/时间点备份」用的完整快照。返回 Blob，调用方触发下载。
+   *   后端不含 users / model_profiles / settings（账号与 API Key 绝不进包）。
+   */
+  packBook(bookId: string, opts: { drama?: boolean; files?: boolean } = {}) {
+    return http.download(
+      `/api/books/${encodeURIComponent(bookId)}/pack`,
+      { drama: opts.drama === false ? 0 : 1, files: opts.files === false ? 0 : 1 },
+    )
+  },
+
+  /** ★ F2 导入 .nfbook（mode=copy 默认新 id / merge 沿用原 id）。长包给足超时。 */
+  importPack(file: File, mode: 'copy' | 'merge' = 'copy') {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post<PackImportResult>(
+      '/api/books/import-pack', fd,
+      { query: { mode }, timeout: 300000 })
+  },
+
+  /** ★ F2 导入前只读预检（校验魔数/格式版本/结构，不落库）。 */
+  inspectPack(file: File) {
+    const fd = new FormData()
+    fd.append('file', file)
+    return http.post<PackInspectResult>(
+      '/api/books/inspect-pack', fd,
+      { timeout: 120000 })
   },
 
   /** 文风档案（部分更新） */

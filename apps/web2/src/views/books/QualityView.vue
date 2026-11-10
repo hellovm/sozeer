@@ -10,9 +10,11 @@
  *   [x] 运行记录（成本 / 耗时）
  * ★ 只报问题不给方案 = 无用（MEMORY.md §39）→ 每条问题都带 advice
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import settingApi, { type Bible } from '@/api/modules/setting'
+import bookApi from '@/api/modules/book'
+import { useTaskStream, type StreamEvent } from '@/composables/useTaskStream'
 import { useUiStore } from '@/stores/ui'
 import { ApiError } from '@/types/api'
 import AppButton from '@/components/AppButton.vue'
@@ -40,6 +42,76 @@ const memory = ref<{ obligations?: Array<{ kind?: string; content?: string
 const loading = ref(true)
 const reindexing = ref(false)
 const tab = ref('chapters')
+
+/* ── ★ #60 全书审计（后台任务 + 逐章流式进度） ──
+ * 后端 audit-book 逐章跑七维审计并落库，事件写进 Task.events_json 供 SSE 回放；
+ * 这里挂任务流，实时显示「正在审计第 N 章 / 已完成 X 章」，完成后自动重拉概览。
+ * 刷新/进页时若有正在跑的全书审计任务 → 自动恢复接续（任务持久化哲学：刷新不失忆）。
+ */
+const auditRunning = ref(false)
+const auditProgress = ref('')        // 后端实时 progress（"3/15 章 · 审计中"）
+const auditLog = ref<string[]>([])  // 逐章完成的轻量进度条（不刷屏，留最近 12 条）
+
+const auditStream = useTaskStream({
+  onEvent: onAuditEvent,
+  onDone: () => { void onAuditStreamDone() },
+})
+
+function onAuditEvent(ev: StreamEvent) {
+  const kind = String(ev.kind || '')
+  if (kind === 'stage') {
+    auditProgress.value = String(ev.text || '')
+  } else if (kind === 'action' && String(ev.type || '') === 'audit') {
+    const line = String(ev.text || '')
+    if (line) {
+      auditLog.value = [...auditLog.value, line].slice(-12)
+    }
+  } else if (kind === 'done') {
+    auditProgress.value = String(ev.text || '全书审计完成')
+  } else if (kind === 'error') {
+    auditProgress.value = String(ev.text || '全书审计失败')
+  }
+  // warn / token 等不影响概览，忽略
+}
+
+async function startAuditBook() {
+  if (auditRunning.value) return
+  auditRunning.value = true
+  auditLog.value = []
+  auditProgress.value = '正在提交全书审计任务…'
+  ui.info('开始全书逐章审计，请稍候…', 8000)
+  try {
+    const r = await settingApi.auditBook(bookId.value)
+    await auditStream.start(bookApi.taskStreamUrl(bookId.value, r.task_id, 0))
+  } catch (e) {
+    auditRunning.value = false
+    if (e instanceof ApiError) ui.err('全书审计提交失败：' + e.message.slice(0, 120))
+  }
+}
+
+/** 流结束：收口 UI + 重拉质检概览（逐章分已落库） */
+async function onAuditStreamDone() {
+  auditRunning.value = false
+  if (auditStream.error.value && !auditProgress.value.includes('完成')) {
+    ui.warn('全书审计未正常完成：' + auditStream.error.value.slice(0, 80))
+  } else {
+    ui.ok('全书审计已完成，概览已刷新')
+  }
+  await load()
+}
+
+/** 进页时恢复：若存在 running 的全书审计任务，自动挂流接续（刷新不失忆） */
+async function resumeRunningAudit() {
+  try {
+    const r = await bookApi.tasks(bookId.value)
+    const running = (r.items || []).find(t => t.kind === 'audit_book' && t.status === 'running')
+    if (running) {
+      auditRunning.value = true
+      auditProgress.value = '检测到进行中的全书审计，已自动接续…'
+      await auditStream.start(bookApi.taskStreamUrl(bookId.value, running.id, 0))
+    }
+  } catch { /* 静默：恢复失败不影响主流程 */ }
+}
 
 /* ── 统计 ── */
 
@@ -73,7 +145,8 @@ const worst = computed(() =>
 const overdue = computed(() =>
   (memory.value?.obligations || []).filter(o => o.overdue))
 
-onMounted(load)
+onMounted(() => { void load(); void resumeRunningAudit() })
+onBeforeUnmount(() => { auditStream.stop() })
 
 async function load() {
   loading.value = true
@@ -131,13 +204,36 @@ const tabs = [
           <h1 class="page__title">质检报告</h1>
           <p class="page__sub">{{ scored.length }} 章已质检 · 平均 {{ avgScore }} 分</p>
         </div>
-        <AppButton size="sm" :loading="reindexing" @click="reindex">重建记忆索引</AppButton>
+        <div class="row gap-2">
+          <AppButton size="sm" :loading="reindexing" @click="reindex">重建记忆索引</AppButton>
+          <!-- ★ #60 全书审计：后台逐章跑七维 + 流式进度（刷新可接续） -->
+          <AppButton variant="primary" size="sm"
+                     :disabled="auditRunning"
+                     @click="startAuditBook">
+            <template v-if="!auditRunning">全书审计</template>
+            <template v-else>审计中…</template>
+          </AppButton>
+        </div>
       </div>
     </header>
 
     <AppSkeleton v-if="loading" variant="card" :count="3" />
 
     <template v-else>
+      <!-- ★ #60 全书审计实时进度（逐章流式） -->
+      <AppCard v-if="auditRunning" title="全书审计进行中" padding="md" style="margin-bottom: var(--sp-4)">
+        <div class="audit">
+          <div class="audit__now">
+            <span class="audit__spinner" aria-hidden="true">◌</span>
+            <span>{{ auditProgress || '正在准备…' }}</span>
+          </div>
+          <ul v-if="auditLog.length" class="audit__log">
+            <li v-for="(line, i) in auditLog" :key="i">{{ line }}</li>
+          </ul>
+          <p class="muted tiny">离开本页不会中断；重新进入会自动接续实时进度。</p>
+        </div>
+      </AppCard>
+
       <!-- 概览 -->
       <div class="cards">
         <AppCard padding="md">
@@ -342,4 +438,22 @@ const tabs = [
 .rtable th, .rtable td { padding: var(--sp-2) var(--sp-3); text-align: left; border-bottom: 1px solid var(--border); }
 .rtable th { color: var(--text-muted); font-weight: var(--fw-medium); }
 .rtable .num { text-align: right; }
+
+/* ★ #60 全书审计实时进度 */
+.audit { display: flex; flex-direction: column; gap: var(--sp-3); }
+.audit__now { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+.audit__spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--brand-200); border-top-color: var(--brand-600);
+  animation: audit-spin .8s linear infinite;
+}
+[data-theme="dark"] .audit__spinner { border-color: var(--brand-800); border-top-color: var(--brand-500); }
+@keyframes audit-spin { to { transform: rotate(360deg); } }
+.audit__log {
+  margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 140px; overflow-y: auto;
+}
+.audit__log li { font-size: var(--fs-xs); color: var(--text-muted); }
+.audit__log li:last-child { color: var(--text); }
 </style>

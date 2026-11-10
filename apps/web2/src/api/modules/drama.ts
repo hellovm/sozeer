@@ -208,8 +208,19 @@ export const dramaApi = {
       `/api/books/${encodeURIComponent(bookId)}/drama/projects/${encodeURIComponent(projectId)}/episodes/${episode}/qc`)
   },
 
+  /**
+   * ★ 已完成导出产物清单（对照 main.py::drama_list_exports 真实契约，
+   *   旧版误写成 { items } —— 那是四种列表风格里猜错的一种，见 MEMORY §80）。
+   *   · exports：剪映草稿 zip（可精修）
+   *   · grids  ：宫格图成品（整图）
+   *   · films  ：★ F4 成片 mp4（拼接+混音+硬字幕，可直发）
+   */
   exports(bookId: string, projectId: string) {
-    return http.get<{ items: Array<{ id: string; name: string; kind: string; created_at: string }> }>(
+    return http.get<{
+      exports: Array<{ path: string; episode: number; url: string; duration_seconds?: number; video_count?: number; finished_at: string }>
+      grids: Array<{ path: string; episode: number; url: string; cells?: number; finished_at: string }>
+      films: Array<{ path: string; episode: number; url: string; seconds?: number; subtitles?: number; burned?: boolean; finished_at: string }>
+    }>(
       `/api/books/${encodeURIComponent(bookId)}/drama/projects/${encodeURIComponent(projectId)}/exports`)
   },
 
@@ -219,15 +230,16 @@ export const dramaApi = {
       {})
   },
 
-  /** 成片导出（拼接 + 混音 + 硬字幕） */
+  /** 成片导出（拼接 + 混音 + 硬字幕；走后台任务，返回 task_id 供挂任务流） */
   film(bookId: string, projectId: string, episode: number) {
-    return http.post<{ ok: boolean; path?: string }>(
+    return http.post<{ ok: boolean; task_id?: string; status?: string; progress?: string }>(
       `/api/books/${encodeURIComponent(bookId)}/drama/projects/${encodeURIComponent(projectId)}/film/${episode}`,
       {})
   },
 
+  /** 成片能力自检（对照 drama_film_capability：ffmpeg / 中文字体 / 画布） */
   filmCapability(bookId: string, projectId: string) {
-    return http.get<{ ffmpeg?: boolean; detail?: string }>(
+    return http.get<{ ffmpeg?: boolean; font?: string; resolution?: string; note?: string }>(
       `/api/books/${encodeURIComponent(bookId)}/drama/projects/${encodeURIComponent(projectId)}/film/capability`)
   },
 

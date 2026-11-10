@@ -1043,7 +1043,10 @@ async def _t_rename_chapter(db, book, a, emit) -> str:
         except Exception as e:                       # noqa: BLE001
             log.warning("rename_chapter 同步 git 失败（不影响标题入库）：book=%s ch=%s: %s",
                         book.id, ch_idx, e)
+    # ★ #305/#310：事件带上 new title（"title" 字段），前端章节树可**原地即时**刷新，
+    #   不必等任务结束再全量重拉（避免「改完名，清单还显示旧标题」的体感 bug）。
     await emit({"kind": "action", "type": "rename", "ch_idx": ch_idx,
+                "title": title,
                 "summary": f"第{ch_idx:03d}章已改名：《{old_title}》→《{title}》"})
     return f"已将第{ch_idx:03d}章标题改为《{title}》（章节清单已同步）。"
 
@@ -1561,7 +1564,6 @@ async def chat_stream(db, book_id: str, message: str, history: list[dict], emit)
                 db.rollback()
             except Exception:
                 pass
-
 
         # ★ #313：聊天主循环用量落 LLMCall 台账（使 /api/me/cost 与洞察 feature_heat 有数据）。
         #   fail-open：record 内部已兜底，失败不影响对话。

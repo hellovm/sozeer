@@ -2392,7 +2392,8 @@ async def drama_export_film(book_id: str, project_id: str, episode: int,
                             {"kind": "stage",
                              "text": f"成片完成：{r.get('seconds')}s / "
                                      f"{r.get('segments')} 段 / 字幕 {r.get('subtitles')} 条"},
-                            status="done", result=r)
+                            status="done",
+                            result={**r, "project_id": p.id})
             else:
                 _task_event(db2, _task_row(db2, task.id),
                             {"kind": "error", "text": "合成失败：" + str(r.get("error"))},
@@ -2454,7 +2455,25 @@ def drama_list_exports(book_id: str, project_id: str, db: Session = Depends(get_
                           "url": f"/api/files/{book_id}/{r['path']}",
                           "cells": (jl(t.payload_json, {}) or {}).get("cells", 0),
                           "finished_at": str(t.finished_at or "")})
-    return {"exports": out, "grids": grids}
+    # ★ F4 成片 mp4：存**通用 Task 表**（kind=drama_film），不进 DramaTask。
+    #   产物路径在 result_json.path（drama_media/film_epN.mp4）；成片端点已把
+    #   project_id 写进 result（兼容旧数据：无 project_id 的行按该书放行）。
+    films = []
+    for t in db.scalars(select(Task).where(
+            Task.book_id == book_id, Task.kind == "drama_film",
+            Task.status == "done").order_by(Task.finished_at.desc())).all():
+        r = jl(t.result_json, {}) or {}
+        pid = r.get("project_id")
+        if pid is not None and pid != p.id:
+            continue          # 属于其它短剧工程的成片，不归本列表
+        if r.get("path"):
+            films.append({"path": r["path"], "episode": t.target,
+                          "url": f"/api/files/{book_id}/{r['path']}",
+                          "seconds": r.get("seconds", 0),
+                          "subtitles": r.get("subtitles", 0),
+                          "burned": r.get("burned", False),
+                          "finished_at": str(t.finished_at or "")})
+    return {"exports": out, "grids": grids, "films": films}
 
 
 @app.get("/api/books/{book_id}/media-usage")
@@ -3730,6 +3749,8 @@ from apps.api.routers import system as _routers_system
 
 app.include_router(_routers_genres.router)
 app.include_router(_routers_system.router)
+# v0.20.2 A2：积分计费
+# v0.20.3 A3：订单与支付
 # v0.20.4 A4：用户中心
 from apps.api.routers import me as _routers_me  # noqa: E402
 app.include_router(_routers_me.router)
@@ -3762,17 +3783,23 @@ app.include_router(_routers_notify.router)
 from apps.api.routers import queue_routes as _routers_queue  # noqa: E402
 app.include_router(_routers_queue.router)
 
+# v0.25.3 H6：开源实例管理
 
 # v0.25.4 I 组：配置中心
 from apps.api.routers import config_routes as _routers_config  # noqa: E402
 app.include_router(_routers_config.router)
 
+# v0.25.5：实例接入（/v1/heartbeat 反向连接）
 
+# v0.25.8 H4：发票与财务对账
 
 # v0.26.1/2：广告位 + 模型多供应商配置 + 前台站点信息
 from apps.api.routers import ads_models as _routers_ads_models  # noqa: E402
 app.include_router(_routers_ads_models.router)
 
+# ★ v1.0-E4.3：套餐管理（后台配置价格体系）
+#   此前只有 GET /api/admin/plans（读），没有任何写端点 ——
+#   于是"后台改价格"根本做不到，价格页只能显示数据库旧值。
 
 # re-export（不参与运行，仅为保持 main 命名空间兼容）
 from apps.api.routers.genres import (  # noqa: E402,F401

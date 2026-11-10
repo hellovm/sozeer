@@ -132,6 +132,55 @@ async function loadVoices() {
   } catch { voices.value = [] }
 }
 
+/* ═══════════════════ F4 成品下载（成片 / 剪映 / 宫格） ═══════════════════
+ *
+ * 后端 .nfbook…不，这里是短剧：film（成片 mp4，拼接+混音+硬字幕）、
+ *   jianying（剪映草稿 zip，可精修）、grid（宫格图）三类产物都已完成登记，
+ *   但 UI 从未给「下载成品」入口（exports() 零调用）——导出成片只是提交
+ *   了后台任务，用户合成了却拿不到那个 mp4。这里把三类成品集中到一个
+ *   可下载列表；并挂上 filmCapability() 提示 ffmpeg 是否就绪（缺失时
+ *   后端会降级为字节拼接：无字幕/无混音，要让用户知情）。
+ */
+const exportsData = ref<{ exports: any[]; grids: any[]; films: any[] }>({ exports: [], grids: [], films: [] })
+const filmCap = ref<{ ffmpeg?: boolean; font?: string; resolution?: string; note?: string } | null>(null)
+
+async function loadExports() {
+  if (!bookId.value || !projectId.value) return
+  try {
+    const r = await dramaApi.exports(bookId.value, projectId.value)
+    exportsData.value = { exports: r.exports || [], grids: r.grids || [], films: r.films || [] }
+  } catch {
+    exportsData.value = { exports: [], grids: [], films: [] }
+  }
+}
+
+async function loadFilmCap() {
+  if (!bookId.value || !projectId.value) return
+  try {
+    filmCap.value = await dramaApi.filmCapability(bookId.value, projectId.value)
+  } catch { filmCap.value = null }
+}
+
+/** ★ 成片导出是后台任务：提交后刷新成品列表，让刚合成的 mp4 立刻可见可下载 */
+async function submitFilm() {
+  await run('film', () => dramaApi.film(bookId.value, projectId.value, episode.value), '成片合成已提交，稍后在下方「成品下载」取')
+  await loadExports()
+}
+
+/** 成品下载：成品存书籍仓库，/exports 端点返回的 url 已是完整
+ *   `/api/files/{book_id}/...`（后端已补 book_id 前缀），直接开新标签下载。 */
+function downloadFile(url?: string, filename?: string) {
+  if (!url) return
+  const a = document.createElement('a')
+  a.href = url
+  a.target = '_blank'
+  a.rel = 'noopener'
+  if (filename) a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 async function boot() {
   if (!bookId.value) {
     ui.warn('缺少作品上下文，请从短剧列表进入')
@@ -140,7 +189,7 @@ async function boot() {
   }
   loading.value = true
   await loadProject()
-  await Promise.all([loadEpisode(), loadAssets(), loadVoices()])
+  await Promise.all([loadEpisode(), loadAssets(), loadVoices(), loadExports(), loadFilmCap()])
   loading.value = false
 }
 
@@ -277,13 +326,39 @@ onMounted(boot)
             <div class="row">
               <AppButton size="sm" variant="primary" :disabled="!progress.withVid"
                          :loading="busy === 'film'"
-                         @click="run('film', () => dramaApi.film(bookId, projectId, episode), '成片导出已提交')">
+                         @click="submitFilm">
                 导出成片
               </AppButton>
               <AppButton size="sm" :disabled="!hasScenes" :loading="busy === 'jy'"
                          @click="run('jy', () => dramaApi.exportJianying(bookId, projectId, episode), '剪映草稿已生成')">
                 剪映草稿
               </AppButton>
+            </div>
+
+            <!-- ★ F4 成品下载：把已合成的成片 mp4 / 剪映 zip / 宫格图集中在此可下载
+                 （旧版「导出成片」只提交后台任务，用户合成了却无处取文件） -->
+            <div v-if="exportsData.films.length || exportsData.exports.length || exportsData.grids.length" class="dl">
+              <p class="muted tiny dl__title">
+                成品下载
+                <template v-if="filmCap && filmCap.ffmpeg === false">
+                  · <span class="dl__warn">⚠ 本机无 ffmpeg：成片已降级为字节拼接（无字幕/无混音）</span>
+                </template>
+              </p>
+              <div v-for="f in exportsData.films" :key="`film-${f.path}`" class="dl__item">
+                <AppTag kind="success" size="sm">成片</AppTag>
+                <span class="dl__name">EP{{ f.episode }} · {{ f.seconds || 0 }}s · 字幕 {{ f.subtitles || 0 }}</span>
+                <AppButton size="sm" variant="ghost" @click="downloadFile(f.url, f.path.split('/').pop)">下载 mp4</AppButton>
+              </div>
+              <div v-for="z in exportsData.exports" :key="`jy-${z.path}`" class="dl__item">
+                <AppTag kind="info" size="sm">剪映</AppTag>
+                <span class="dl__name">EP{{ z.episode }} · {{ z.video_count || 0 }} 段</span>
+                <AppButton size="sm" variant="ghost" @click="downloadFile(z.url, z.path.split('/').pop)">下载 zip</AppButton>
+              </div>
+              <div v-for="g in exportsData.grids" :key="`grid-${g.path}`" class="dl__item">
+                <AppTag size="sm">宫格</AppTag>
+                <span class="dl__name">EP{{ g.episode }} · {{ g.cells || 0 }} 格</span>
+                <AppButton size="sm" variant="ghost" @click="downloadFile(g.url, g.path.split('/').pop)">下载图</AppButton>
+              </div>
             </div>
           </div>
         </div>
@@ -441,6 +516,16 @@ onMounted(boot)
 .op b { font-size: var(--fs-sm); }
 .op p { margin: 4px 0 0; }
 .row { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* ★ F4 成品下载区 */
+.dl { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px dashed var(--border); }
+.dl__title { font-size: var(--fs-xs); font-weight: var(--fw-medium); margin-bottom: var(--sp-2); }
+.dl__warn { color: var(--brand-600); }
+.dl__item {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.dl__name { font-size: var(--fs-xs); color: var(--text-muted); flex: 1 1 auto; }
 
 .epbar { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .epbar label { font-size: var(--fs-sm); color: var(--text-muted); }

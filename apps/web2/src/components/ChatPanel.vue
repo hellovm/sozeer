@@ -17,11 +17,14 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   /** 流式增量文本（未落库的部分） */
   streamText?: string
+  /** ★ #61 agent 调用/过程活动流（「正在读第 N 章」「已记录人物…」） */
+  actions?: Array<{ icon: string; text: string }>
   disabled?: boolean
 }>(), {
   streaming: false,
   loading: false,
   streamText: '',
+  actions: () => [],
   disabled: false,
 })
 
@@ -170,6 +173,21 @@ function roleLabel(r: string) {
             <div class="msg__text">{{ streamText }}<span class="caret" aria-hidden="true" /></div>
           </div>
         </article>
+
+        <!-- ★ #61 agent 调用/过程活动流：实时显示「正在读第 N 章」「已记录人物…」 -->
+        <details v-if="actions.length" class="chat__acts">
+          <summary class="chat__acts-sum">
+            <span class="chat__acts-ico" aria-hidden="true">⚙</span>
+            过程<template v-if="streaming">（进行中 · {{ actions.length }} 步）</template>
+            <template v-else>（已完成 · {{ actions.length }} 步）</template>
+          </summary>
+          <ul class="chat__acts-list">
+            <li v-for="(a, i) in actions" :key="i" class="chat__acts-item">
+              <span class="chat__acts-icn" aria-hidden="true">{{ a.icon }}</span>
+              <span class="chat__acts-txt">{{ a.text }}</span>
+            </li>
+          </ul>
+        </details>
       </template>
 
       <!-- 停止生成的悬浮按钮 -->
@@ -292,6 +310,33 @@ function roleLabel(r: string) {
 @keyframes blink { 50% { opacity: 0; } }
 
 .chat__stop { display: flex; justify-content: center; padding-bottom: var(--sp-2); }
+
+/* ★ #61 agent 调用/过程活动流 */
+.chat__acts {
+  margin-top: var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+.chat__acts-sum {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  color: var(--text-muted); cursor: pointer; list-style: none;
+}
+.chat__acts-sum::-webkit-details-marker { display: none; }
+.chat__acts-sum:hover { background: var(--bg-hover); }
+.chat__acts-ico { font-size: 13px; }
+.chat__acts-list {
+  margin: 0; padding: 0 var(--sp-2) var(--sp-2); list-style: none;
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 180px; overflow-y: auto;
+}
+.chat__acts-item { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.chat__acts-icn { flex-shrink: 0; font-size: 12px; line-height: 1.4; }
+.chat__acts-txt { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.4; }
+.chat__acts-item:last-child .chat__acts-txt { color: var(--text); }
 
 /* ★ 回到最新（上滑后出现的悬浮按钮，v0.27.2） */
 .chat__jump {

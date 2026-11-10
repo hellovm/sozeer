@@ -32,7 +32,7 @@ DOCS_ENABLED = os.environ.get("NOVELFORGE_DOCS", "1") == "1"
 # ----------------------------------------------------------------- 应用版本
 # v0.18 T1：版本号集中在此，main.py 的 FastAPI(version=...) 与
 # routers/system.py 的 /api/health 都引用它，避免两处各写一份而漂移。
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 
 def ensure_dirs() -> None:

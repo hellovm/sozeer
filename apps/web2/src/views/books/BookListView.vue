@@ -12,7 +12,9 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import bookApi, { type Book, type CreateBookPayload } from '@/api/modules/book'
+import bookApi, {
+  type Book, type CreateBookPayload, type PackInspectResult,
+} from '@/api/modules/book'
 import { useUiStore } from '@/stores/ui'
 import { ApiError } from '@/types/api'
 import AppButton from '@/components/AppButton.vue'
@@ -182,6 +184,105 @@ function fmtDate(s?: string) { return s ? s.slice(0, 10) : '—' }
 function themeLabel(key?: string) {
   return THEMES.find(t => t.key === key)?.label || key || ''
 }
+
+/* ══════════════════════ F2 整书打包 备份 / 恢复 ══════════════════════
+ *
+ * 后端 .nfbook（ZIP 机器可还原快照：设定/大纲/人物/伏笔/纪年表/账本/
+ *   短剧工程/原始文件）三端点早已就绪（/pack 导出 · /import-pack 导入 ·
+ *   /inspect-pack 预检），但前端**从未接上**——删除弹窗里那句「改用导出
+ *   备份保留数据」根本点不到东西。这里把两条入口补齐：
+ *
+ *   · 每本作品卡片/行上「备份」→ 下载该书 .nfbook
+ *   · 页级「导入备份」→ 选 .nfbook 文件：先只读预检（/inspect-pack，
+ *     校验魔数/格式版本/结构，不落库），通过后再选 复制/覆盖 执行导入
+ *
+ * ★ 导入是「可逆/幂等」操作（copy 换新 id 绝不覆盖现有书），但 merge
+ *   沿用原 id 会覆盖同名书，故 merge 需二次确认（复用删除弹窗同款
+ *   两阶段思路的精神：破坏性选项要让用户看清代价）。
+ */
+const packingId = ref('')
+
+/** 下载某本书的 .nfbook 备份（浏览器保存，复用 createObjectURL 模式） */
+async function backupBook(b: Book, ev?: Event) {
+  ev?.stopPropagation()          // ★ 卡片可点「打开作品」，备份按钮不能触发它
+  packingId.value = b.id
+  try {
+    const blob = await bookApi.packBook(b.id)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${(b.title || 'book').slice(0, 40)}.${Date.now()}.nfbook`
+    a.click()
+    URL.revokeObjectURL(url)
+    ui.ok(`《${b.title}》备份已开始下载`)
+  } catch (e) {
+    ui.err((e instanceof ApiError ? e.message : '备份失败') || '备份失败')
+  } finally {
+    packingId.value = ''
+  }
+}
+
+/* ── 导入备份（页级）：选文件 → 预检 → copy/merge → 执行 ── */
+const showImport = ref(false)
+const importBusy = ref(false)
+const importMode = ref<'copy' | 'merge'>('copy')
+/** 已选文件 + 预检结果（未预检通过前不允许执行导入） */
+const importFile = ref<File | null>(null)
+const importInspect = ref<PackInspectResult | null>(null)
+const importInspecting = ref(false)
+const importInspectOk = computed(() =>
+  !!importInspect.value?.ok && importInspect.value.compatible !== false)
+/** ★ merge 覆盖现有书 → 需输入要覆盖的书名二次确认（copy 则无需） */
+const importConfirmText = ref('')
+const mergeTextOk = computed(() =>
+  importMode.value === 'copy' || importConfirmText.value.trim().length > 0)
+
+function openImport() {
+  importFile.value = null
+  importInspect.value = null
+  importMode.value = 'copy'
+  importConfirmText.value = ''
+  showImport.value = true
+}
+
+function onImportFileChange(e: Event) {
+  const f = (e.target as HTMLInputElement).files?.[0] || null
+  importFile.value = f
+  importInspect.value = null            // 换了文件必须重新预检
+  importConfirmText.value = ''
+}
+
+/** 预检（只读，不落库）：校验魔数/格式版本/结构，给出导入前信息 */
+async function inspectImportFile() {
+  if (!importFile.value) return
+  importInspecting.value = true
+  try {
+    importInspect.value = await bookApi.inspectPack(importFile.value)
+    if (!importInspect.value.ok) {
+      ui.err(importInspect.value.error || '备份包无效，无法导入')
+    }
+  } catch (e) {
+    importInspect.value = null
+    ui.err((e instanceof ApiError ? e.message : '预检失败') || '预检失败')
+  } finally {
+    importInspecting.value = false
+  }
+}
+
+async function doImport() {
+  if (!importFile.value || !importInspectOk.value || !mergeTextOk.value) return
+  importBusy.value = true
+  try {
+    const r = await bookApi.importPack(importFile.value, importMode.value)
+    ui.ok(`导入成功：《${r.title}》（${r.mode === 'merge' ? '覆盖' : '复制'}）`)
+    showImport.value = false
+    await load()                          // 刷新列表，呈现新导入的书
+  } catch (e) {
+    ui.err((e instanceof ApiError ? e.message : '导入失败') || '导入失败')
+  } finally {
+    importBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -191,7 +292,10 @@ function themeLabel(key?: string) {
         <h1 class="page__title">我的作品</h1>
         <p class="page__sub">共 {{ books.length }} 部</p>
       </div>
-      <AppButton variant="primary" icon="＋" @click="openCreate">新建作品</AppButton>
+      <div class="page__acts">
+        <AppButton variant="ghost" icon="⬆" @click="openImport">导入备份</AppButton>
+        <AppButton variant="primary" icon="＋" @click="openCreate">新建作品</AppButton>
+      </div>
     </header>
 
     <!-- 工具栏 -->
@@ -253,6 +357,15 @@ function themeLabel(key?: string) {
             aria-label="删除作品"
             @click="askDelete(b, $event)"
           >✕</button>
+          <!-- ★ F2 备份入口：下载该书 .nfbook 完整快照（换服务器/时间点回退） -->
+          <button
+            class="bcard__bak"
+            type="button"
+            :disabled="packingId === b.id"
+            :title="packingId === b.id ? '正在备份…' : '备份这本作品（.nfbook 完整快照）'"
+            aria-label="备份作品"
+            @click="backupBook(b, $event)"
+          >{{ packingId === b.id ? '…' : '备份' }}</button>
           <h3 class="bcard__title truncate">{{ b.title }}</h3>
           <p class="bcard__meta">
             {{ b.author || '未署名' }}
@@ -289,7 +402,15 @@ function themeLabel(key?: string) {
           <span class="r mono">{{ b.chapters || 0 }}</span>
           <span class="r mono">{{ (b.words || 0).toLocaleString('zh-CN') }}</span>
           <span class="muted tiny">{{ fmtDate(b.updated_at || b.created_at) }}</span>
-          <span class="r">
+          <span class="r ltable__acts">
+            <button
+              class="ltable__bak"
+              type="button"
+              :disabled="packingId === b.id"
+              :title="packingId === b.id ? '正在备份…' : '备份这本作品（.nfbook 完整快照）'"
+              aria-label="备份作品"
+              @click="backupBook(b, $event)"
+            >{{ packingId === b.id ? '…' : '备份' }}</button>
             <button
               class="ltable__del"
               type="button"
@@ -389,6 +510,82 @@ function themeLabel(key?: string) {
         <p v-if="formError" class="form__error" role="alert">{{ formError }}</p>
       </div>
     </AppModal>
+
+    <!-- ★ F2 导入备份弹窗：选文件 → 预检（只读）→ 选 复制/覆盖 → 执行 -->
+    <AppModal
+      v-model="showImport"
+      title="导入作品备份（.nfbook）"
+      :hide-footer="true"
+      width="520px"
+      @cancel="showImport = false"
+    >
+      <div class="imp">
+        <p class="imp__lead">
+          上传一个 <code>.nfbook</code> 完整备份，把某本书连同设定 / 大纲 /
+          人物 / 伏笔 / 纪年表 / 账本 / 短剧工程一起搬过来（换服务器或恢复时间点用）。
+        </p>
+
+        <!-- ① 选文件 + 预检 -->
+        <label class="imp__pick">
+          <input type="file" accept=".nfbook,.zip" @change="onImportFileChange" />
+          <span class="imp__picktxt">{{ importFile?.name || '选择 .nfbook 文件…' }}</span>
+        </label>
+
+        <button
+          class="imp__inspect"
+          type="button"
+          :disabled="!importFile || importInspecting"
+          @click="inspectImportFile"
+        >{{ importInspecting ? '正在预检…' : '① 预检（校验包格式）' }}</button>
+
+        <!-- 预检结果 -->
+        <div v-if="importInspect && importInspectOk" class="imp__ok">
+          ✔ 预检通过：《{{ importInspect.manifest?.book_title || importInspect.manifest?.book_id || '未知' }}》
+          <span class="muted tiny">
+            格式 v{{ importInspect.manifest?.format_version }} · {{ importInspect.entries || 0 }} 项
+            <template v-if="importInspect.manifest?.exported_at"> · {{ importInspect.manifest.exported_at }}</template>
+          </span>
+        </div>
+        <div v-else-if="importInspect && !importInspectOk" class="imp__err">
+          ✖ {{ importInspect.error || '包无效或格式不受支持' }}
+        </div>
+
+        <!-- ② 选导入方式（仅预检通过后可选） -->
+        <div v-if="importInspectOk" class="imp__mode">
+          <label class="imp__radio">
+            <input v-model="importMode" type="radio" value="copy" />
+            <div>
+              <b>复制为新作品</b>
+              <span class="muted tiny">生成新 id，<strong>不覆盖</strong>任何现有作品（最安全，默认）</span>
+            </div>
+          </label>
+          <label class="imp__radio">
+            <input v-model="importMode" type="radio" value="merge" />
+            <div>
+              <b>覆盖原 id</b>
+              <span class="muted tiny">沿用原作品 id，<strong>会覆盖同名书的既有数据</strong>（恢复用）</span>
+            </div>
+          </label>
+          <!-- ★ merge 需二次确认（不可逆覆盖）；copy 无需 -->
+          <AppInput
+            v-if="importMode === 'merge'"
+            v-model="importConfirmText"
+            label="覆盖属不可逆操作，输入 YES 以确认"
+            placeholder="YES"
+          />
+        </div>
+
+        <!-- ③ 执行 -->
+        <div class="imp__foot">
+          <button
+            class="imp__import"
+            type="button"
+            :disabled="!importInspectOk || !mergeTextOk || importBusy"
+            @click="doImport"
+          >{{ importBusy ? '导入中…' : '② 执行导入' }}</button>
+        </div>
+      </div>
+    </AppModal>
   </div>
 </template>
 
@@ -400,6 +597,7 @@ function themeLabel(key?: string) {
 }
 .page__title { font-size: var(--fs-xl); margin-bottom: var(--sp-1); }
 .page__sub { font-size: var(--fs-sm); color: var(--text-muted); }
+.page__acts { display: flex; align-items: center; gap: var(--sp-2); }
 
 .toolbar { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .toolbar__search { flex: 1 1 auto; max-width: 320px; }
@@ -442,6 +640,23 @@ function themeLabel(key?: string) {
 }
 .bcard__del:focus-visible { opacity: 1; outline: 2px solid var(--brand-500); }
 
+/* ★ F2 卡片「备份」角标：与删除 ✕ 并排，同样悬停/聚焦才显现（低干扰） */
+.bcard__bak {
+  position: absolute; top: 4px; right: 26px;
+  height: 22px; padding: 0 8px; line-height: 20px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: 11px; cursor: pointer; white-space: nowrap;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease),
+                          color var(--dur-fast) var(--ease),
+                          border-color var(--dur-fast) var(--ease);
+}
+.bcard:hover .bcard__bak,
+.bcard:focus-within .bcard__bak { opacity: 1; }
+.bcard__bak:hover:not(:disabled) { color: var(--brand-600); border-color: var(--brand-200); }
+.bcard__bak:disabled { cursor: progress; }
+.bcard__bak:focus-visible { opacity: 1; outline: 2px solid var(--brand-500); }
+
 .bcard__meta {
   display: flex; align-items: center; gap: var(--sp-2);
   font-size: var(--fs-xs); color: var(--text-muted);
@@ -482,6 +697,16 @@ function themeLabel(key?: string) {
 }
 .ltable__del:hover { color: var(--danger, #d33); background: var(--bg-sunken); }
 .ltable__del:focus-visible { outline: 2px solid var(--brand-500); }
+.ltable__acts { display: inline-flex; align-items: center; gap: 6px; }
+/* ★ F2 行内「备份」文字按钮：低干扰，与「删除」并排 */
+.ltable__bak {
+  border: 0; background: none; padding: 2px 4px;
+  color: var(--text-subtle); font-size: var(--fs-xs);
+  cursor: pointer; border-radius: var(--r-sm);
+}
+.ltable__bak:hover:not(:disabled) { color: var(--brand-600); background: var(--bg-sunken); }
+.ltable__bak:disabled { cursor: progress; }
+.ltable__bak:focus-visible { outline: 2px solid var(--brand-500); }
 
 /* 删除确认弹窗 */
 .del { display: flex; flex-direction: column; gap: var(--sp-4); }
@@ -500,6 +725,61 @@ function themeLabel(key?: string) {
   padding: var(--sp-2) var(--sp-3);
   background: var(--bg-sunken); border-radius: var(--r-md);
 }
+
+/* ★ F2 导入备份弹窗 */
+.imp { display: flex; flex-direction: column; gap: var(--sp-3); }
+.imp__lead { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.6; }
+.imp__lead code {
+  background: var(--bg-sunken); padding: 1px 5px;
+  border-radius: var(--r-sm); font-size: var(--fs-xs); color: var(--text);
+}
+.imp__pick { display: block; }
+.imp__pick input[type="file"] { display: none; }
+.imp__picktxt {
+  display: block; padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--border); border-radius: var(--r-md);
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: var(--fs-xs); text-align: center; cursor: pointer;
+}
+.imp__pick:hover .imp__picktxt { border-color: var(--brand-200); color: var(--text); }
+.imp__inspect {
+  align-self: flex-start; padding: 4px var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--r-full);
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: var(--fs-xs); cursor: pointer;
+}
+.imp__inspect:disabled { opacity: .5; cursor: not-allowed; }
+.imp__inspect:not(:disabled) { border-color: var(--brand-200); color: var(--brand-600); }
+.imp__ok {
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--brand-500) 8%, transparent);
+  border: 1px solid var(--brand-200);
+  font-size: var(--fs-xs); line-height: 1.6;
+}
+.imp__err {
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
+  background: var(--danger-bg); border: 1px solid var(--danger);
+  color: var(--danger); font-size: var(--fs-xs);
+}
+.imp__mode { display: flex; flex-direction: column; gap: var(--sp-2); }
+.imp__radio {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--bg-elevated); cursor: pointer;
+}
+.imp__radio:hover { border-color: var(--brand-200); }
+.imp__radio input { margin-top: 2px; accent-color: var(--brand-500); }
+.imp__radio b { font-size: var(--fs-sm); font-weight: var(--fw-medium); display: block; }
+.imp__foot { margin-top: var(--sp-1); }
+.imp__import {
+  width: 100%; padding: var(--sp-2) var(--sp-3);
+  border: none; border-radius: var(--r-md);
+  background: var(--brand-500); color: #fff;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); cursor: pointer;
+}
+.imp__import:disabled { background: var(--gray-300, #ccc); cursor: not-allowed; }
+.imp__import:not(:disabled) { background: var(--brand-600); }
 
 /* 表单 */
 .form { display: flex; flex-direction: column; gap: var(--sp-4); }
