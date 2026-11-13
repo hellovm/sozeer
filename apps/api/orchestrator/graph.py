@@ -247,6 +247,10 @@ async def node_brief(fc: FlowContext) -> None:
         user_instruction=fc.user_instruction,
         timeline=fc.pack.timeline,
         ledger=fc.pack.ledger,
+        # ★ v1.3.0 连续性强化：任务单也要看到"上一章结尾 + 三级大纲定位"，
+        #   这样 brief 定下的"接哪、往哪推"与正文侧一致，不会在规划时就跑偏。
+        continuity=fc.pack.continuity,
+        outline=fc.pack.outline,
     )
     r = await llm.complete(m, [{"role": "user", "content": prompt}], json_mode=True)
     # ★ v0.23.2 D2：带任务标签记账（看板按功能聚合）
@@ -298,6 +302,12 @@ async def node_generate(fc: FlowContext) -> None:
         ledger=fc.pack.ledger,
         rolling=fc.pack.rolling,
         retrieved=fc.pack.retrieved,
+        # ★ v1.3.0 连续性强化：补传此前装配器已算好、却从未喂给正文模型的 3 个包
+        #   （loader.render 会把未传变量静默清空 → 此前这些 section 实际没进 prompt）。
+        #   代价是 prompt 变长，换章节衔接/不重复/信息差/定位的一致性。
+        continuity=fc.pack.continuity,
+        knowledge=fc.pack.knowledge,
+        outline=fc.pack.outline,
     )
     buf: list[str] = []
     # ★ v0.23.2 D2：改用 stream_usage —— 正文是最大成本项，

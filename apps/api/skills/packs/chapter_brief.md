@@ -4,7 +4,7 @@ name: 章前任务单
 description: 为下一章生成任务单：推进什么、埋什么、收什么、爽点类型、钩子要求
 version: 1
 model_role: planner
-variables: volume_outline,early_summaries,recent_chapters,foreshadows,characters,user_instruction,timeline,ledger
+variables: volume_outline,early_summaries,recent_chapters,foreshadows,characters,user_instruction,timeline,ledger,outline,continuity
 ---
 你是长篇连载小说的主编，负责给下一章下任务单。不要写正文。
 
@@ -29,6 +29,12 @@ variables: volume_outline,early_summaries,recent_chapters,foreshadows,characters
 
 ## 度量衡余额（金钱 / 经验 / 年龄 / 功法 / 级别）
 {{ledger}}
+
+## ★ 三级大纲定位（全书 → 本卷 → 本章，"往哪推"不得偏离）
+{{outline}}
+
+## 连续性衔接（上一章结尾必须紧接，"起"不得另起炉灶）
+{{continuity}}
 
 ## 用户额外要求
 {{user_instruction}}
