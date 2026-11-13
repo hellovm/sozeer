@@ -25,8 +25,15 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // ★ 手动分包：把体积大的库拆开，避免单文件过大
-        manualChunks: {
-          vue: ['vue', 'vue-router', 'pinia'],
+        // Vite 8（底层 Rolldown 取代 Rollup）：manualChunks 只接受**函数**形式，
+        // 旧的**对象**形式 `{ vue: [...] }` 会被当函数调用 → "manualChunks is not a function" 崩。
+        //   函数语义等价：命中 vue 生态（vue / @vue/* / vue-router / pinia）归入 'vue' chunk。
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('vue') || id.includes('pinia')) {
+              return 'vue'
+            }
+          }
         },
         // ★ 带 hash 便于长缓存（index.html 用 no-cache）
         chunkFileNames: 'assets/[name]-[hash].js',
