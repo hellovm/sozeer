@@ -99,6 +99,77 @@ async function doDelete() {
   }
 }
 
+/* ══════════════════════ ★ v1.2.0 封面生成 ══════════════════════
+ * 后端 AI 无字底图（系统配置 image 模型）+ 服务端 PIL 真字体排字，
+ * 彻底规避扩散模型乱码。卡片悬停「封面」按钮 → 生成 → 弹窗预览。
+ * 画幅默认 2:3（书封），弹窗里可切 9:16 / 换风格再生成。
+ */
+const coverBusyId = ref('')
+const showCover = ref(false)
+const coverPreview = ref('')
+const coverTitle = ref('')
+const coverBaseOk = ref(false)   // ai_base=false 说明底图失败，已降级纯渐变
+const coverPortrait = ref<'2:3' | '9:16'>('2:3')
+const coverStyle = ref<'xianxia' | 'modern'>('xianxia')
+/** ★ v1.2.0 弹窗里的画幅/风格选项（带字面量类型，模板 v-for 直接引用，避免 string[] 推断） */
+const PORTRAIT_OPTS: { v: '2:3' | '9:16'; label: string }[] = [
+  { v: '2:3', label: '小说封面 2:3' },
+  { v: '9:16', label: '竖屏 9:16' },
+]
+const STYLE_OPTS: { v: 'xianxia' | 'modern'; label: string }[] = [
+  { v: 'xianxia', label: '古风竖排' },
+  { v: 'modern', label: '现代横排' },
+]
+
+async function generateCover(b: Book, ev?: Event) {
+  ev?.stopPropagation()
+  coverBusyId.value = b.id
+  try {
+    const r = await bookApi.generateCover(b.id, {
+      style: coverStyle.value, portrait: coverPortrait.value,
+    })
+    coverPreview.value = r.url
+    coverTitle.value = b.title
+    coverBaseOk.value = r.ai_base
+    showCover.value = true
+    ui.ok(r.ai_base ? '封面已生成' : '底图模型不可用，已用渐变底生成')
+  } catch (e) {
+    ui.err((e instanceof ApiError ? e.message : '封面生成失败') || '封面生成失败')
+  } finally {
+    coverBusyId.value = ''
+  }
+}
+
+/** ★ v1.2.0 弹窗里换画幅/风格后「重新生成」当前书 */
+async function regenerateCover() {
+  if (!coverTitle.value) return
+  const b = books.value.find(x => (x.title || '').trim() === (coverTitle.value || '').trim())
+  if (!b) return
+  coverBusyId.value = b.id
+  try {
+    const r = await bookApi.generateCover(b.id, {
+      style: coverStyle.value, portrait: coverPortrait.value,
+    })
+    coverPreview.value = r.url
+    coverBaseOk.value = r.ai_base
+  } catch (e) {
+    ui.err((e instanceof ApiError ? e.message : '重新生成失败') || '重新生成失败')
+  } finally {
+    coverBusyId.value = ''
+  }
+}
+
+/** 下载封面 */
+function downloadCover() {
+  if (!coverPreview.value) return
+  const a = document.createElement('a')
+  a.href = coverPreview.value
+  a.download = `${(coverTitle.value || 'cover').slice(0, 40)}.png`
+  a.target = '_blank'
+  a.rel = 'noopener'
+  a.click()
+}
+
 /** 首批题材（与后端 genres 对齐） */
 const THEMES = [
   { key: 'xianxia', label: '仙侠' },
@@ -366,6 +437,15 @@ async function doImport() {
             aria-label="备份作品"
             @click="backupBook(b, $event)"
           >{{ packingId === b.id ? '…' : '备份' }}</button>
+          <!-- ★ v1.2.0 封面生成入口：AI 无字底图 + 服务端排字（规避乱码） -->
+          <button
+            class="bcard__cover"
+            type="button"
+            :disabled="coverBusyId === b.id"
+            :title="coverBusyId === b.id ? '正在生成封面…' : '生成封面（AI 底图 + 书名/作者排版）'"
+            aria-label="生成封面"
+            @click="generateCover(b, $event)"
+          >{{ coverBusyId === b.id ? '…' : '封面' }}</button>
           <h3 class="bcard__title truncate">{{ b.title }}</h3>
           <p class="bcard__meta">
             {{ b.author || '未署名' }}
@@ -508,6 +588,53 @@ async function doImport() {
           />
         </div>
         <p v-if="formError" class="form__error" role="alert">{{ formError }}</p>
+      </div>
+    </AppModal>
+
+    <!-- ★ v1.2.0 封面预览弹窗：生成后预览 + 切画幅/风格重生成 + 下载 -->
+    <AppModal
+      v-model="showCover"
+      title="封面预览"
+      :hide-footer="true"
+      width="520px"
+      @cancel="showCover = false"
+    >
+      <div class="cov">
+        <p class="cov__title">{{ coverTitle }}</p>
+        <div class="cov__stage">
+          <img v-if="coverPreview" :src="coverPreview" :alt="coverTitle" class="cov__img" />
+          <p v-else class="muted tiny">生成中…</p>
+        </div>
+        <p v-if="!coverBaseOk" class="cov__note">
+          ℹ️ 当前底图模型不可用，已用渐变底生成（到配置中心添加 image 角色模型后可出真图）。
+        </p>
+        <div class="cov__opts">
+          <div class="cov__row">
+            <label class="cov__lbl">画幅</label>
+            <button
+              v-for="opt in PORTRAIT_OPTS"
+              :key="opt.v"
+              class="chip" :class="{ 'is-on': coverPortrait === opt.v }"
+              type="button"
+              @click="coverPortrait = opt.v"
+            >{{ opt.label }}</button>
+          </div>
+          <div class="cov__row">
+            <label class="cov__lbl">风格</label>
+            <button
+              v-for="opt in STYLE_OPTS"
+              :key="opt.v"
+              class="chip" :class="{ 'is-on': coverStyle === opt.v }"
+              type="button"
+              @click="coverStyle = opt.v"
+            >{{ opt.label }}</button>
+          </div>
+          <div class="cov__row">
+            <button class="cov__regen" type="button" :disabled="!!coverBusyId" @click="regenerateCover">
+              {{ coverBusyId ? '生成中…' : '按当前设置重新生成' }}</button>
+            <button class="cov__dl" type="button" :disabled="!coverPreview" @click="downloadCover">⬇ 下载</button>
+          </div>
+        </div>
       </div>
     </AppModal>
 
@@ -657,6 +784,23 @@ async function doImport() {
 .bcard__bak:disabled { cursor: progress; }
 .bcard__bak:focus-visible { opacity: 1; outline: 2px solid var(--brand-500); }
 
+/* ★ v1.2.0 卡片「封面」角标：与备份并排（最左），同样悬停/聚焦才显现 */
+.bcard__cover {
+  position: absolute; top: 4px; right: 70px;
+  height: 22px; padding: 0 8px; line-height: 20px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: 11px; cursor: pointer; white-space: nowrap;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease),
+                          color var(--dur-fast) var(--ease),
+                          border-color var(--dur-fast) var(--ease);
+}
+.bcard:hover .bcard__cover,
+.bcard:focus-within .bcard__cover { opacity: 1; }
+.bcard__cover:hover:not(:disabled) { color: var(--brand-600); border-color: var(--brand-200); }
+.bcard__cover:disabled { cursor: progress; }
+.bcard__cover:focus-visible { opacity: 1; outline: 2px solid var(--brand-500); }
+
 .bcard__meta {
   display: flex; align-items: center; gap: var(--sp-2);
   font-size: var(--fs-xs); color: var(--text-muted);
@@ -780,6 +924,44 @@ async function doImport() {
 }
 .imp__import:disabled { background: var(--gray-300, #ccc); cursor: not-allowed; }
 .imp__import:not(:disabled) { background: var(--brand-600); }
+
+/* ★ v1.2.0 封面预览弹窗 */
+.cov { display: flex; flex-direction: column; gap: var(--sp-3); }
+.cov__title { font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+.cov__stage {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 240px; border: 1px solid var(--border);
+  border-radius: var(--r-md); background: var(--bg-sunken);
+  padding: var(--sp-2); overflow: hidden;
+}
+.cov__img {
+  max-height: 340px; max-width: 100%; border-radius: var(--r-sm);
+  object-fit: contain; background: #101018;
+}
+.cov__note {
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
+  background: var(--bg-sunken); font-size: var(--fs-xs); color: var(--text-muted);
+  line-height: 1.6;
+}
+.cov__opts { display: flex; flex-direction: column; gap: var(--sp-2); }
+.cov__row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.cov__lbl { font-size: var(--fs-xs); color: var(--text-muted); min-width: 28px; }
+.cov__regen {
+  padding: 4px var(--sp-3); border: 1px solid var(--brand-200);
+  border-radius: var(--r-full); background: var(--brand-50);
+  color: var(--brand-600); font-size: var(--fs-xs); cursor: pointer;
+}
+.cov__regen:disabled { opacity: .6; cursor: progress; }
+.cov__dl {
+  padding: 4px var(--sp-3); border: 1px solid var(--border);
+  border-radius: var(--r-full); background: var(--bg-elevated);
+  color: var(--text-muted); font-size: var(--fs-xs); cursor: pointer;
+}
+.cov__dl:disabled { opacity: .5; cursor: not-allowed; }
+.cov__dl:not(:disabled) { border-color: var(--brand-200); color: var(--brand-600); }
 
 /* 表单 */
 .form { display: flex; flex-direction: column; gap: var(--sp-4); }

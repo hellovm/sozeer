@@ -1805,6 +1805,16 @@ class CoverIn(BaseModel):
     style: str = "xianxia"     # xianxia（竖排·古风）| modern（横排·现代）
     no_ai: bool = False        # True = 不调图片模型，纯渐变底（用于排版预览）
     hint: str = ""             # 画面补充要求（可空），如"突出主角背影+雷云"
+    portrait: str = "2:3"      # ★ v1.2.0：2:3（小说封面,默认）| 9:16（竖屏）
+
+
+class PosterIn(BaseModel):
+    """短剧海报请求体。★ v1.2.0 新增。"""
+    tagline: str = ""          # 宣传语（可空）
+    style: str = "xianxia"     # xianxia（竖排）| modern（横排）
+    no_ai: bool = False        # True = 不调图片模型，纯渐变底
+    hint: str = ""             # 画面补充要求（可空）
+    portrait: str = "9:16"     # 短剧默认竖屏 9:16；可选 2:3
 
 
 @app.post("/api/books/{book_id}/cover")
@@ -1813,28 +1823,65 @@ async def gen_book_cover(book_id: str, body: CoverIn, db: Session = Depends(get_
 
     v0.13.9：底图 prompt 由 LLM 读全部设定集组稿（类型/基调/梗概/简介/主角/
     世界观/用户 hint），贴合小说内容；LLM 不可用时按题材锚点确定性兜底。
-    文字由服务端渲染（Noto CJK），彻底规避扩散模型的乱码/错字问题。
-    产物落 drama_media/cover.png，走 /api/files/ 鉴权取出。
+    文字由服务端渲染（Noto CJK，多级降级），彻底规避扩散模型的乱码/错字问题。
+    ★ v1.2.0：底图改走系统配置的 image 模型（pick_model 降级链 + 成本台账）；
+    画幅支持 portrait（2:3 默认书封 / 9:16 竖屏），产物落 drama_media/，/api/files/ 取出。
     """
     b = db.get(Book, book_id)
     if not b:
         raise HTTPException(404, "book not found")
     from apps.api import cover as cover_mod   # 顶层 import 在包加载下解析不到，必须绝对导入
+    portrait = body.portrait if body.portrait in cover_mod._CANVAS else "2:3"
     base_png = b""
     base_prompt = ""
     if not body.no_ai:
         base_prompt = await cover_mod.build_base_prompt(db, b, hint=body.hint)
         try:
-            base_png = await cover_mod.gen_base_image(db, base_prompt)
+            base_png = await cover_mod.gen_base_image(db, base_prompt,
+                                                       size=cover_mod._BASE_SIZE[portrait],
+                                                       book_id=book_id)
         except Exception:
             # 底图失败不阻断：降级纯渐变底，文字排版仍然交付
             base_png = b""
     png = cover_mod.compose_cover(b.title, author=b.author or "",
                                   tagline=body.tagline, base_png=base_png or None,
-                                  style=body.style)
+                                  style=body.style, portrait=portrait)
     rel = cover_mod.save_cover(book_id, png)
     return {"ok": True, "path": rel, "url": f"/api/files/{rel}",
-            "ai_base": bool(base_png), "base_prompt": base_prompt}
+            "ai_base": bool(base_png), "base_prompt": base_prompt, "portrait": portrait}
+
+
+@app.post("/api/books/{book_id}/drama/projects/{project_id}/poster")
+async def drama_poster(book_id: str, project_id: str, body: PosterIn,
+                      db: Session = Depends(get_db)):
+    """★ v1.2.0：短剧竖屏海报 = 符合画风/题材的 AI 无字底图 + PIL 真字体叠剧名/主创。
+
+    与小说封面同一套"无字底图 + 服务端排字"反乱码架构，差异在于：
+      · 画幅默认 9:16（短视频/抖音竖屏，书封惯例是 2:3）；
+      · 底图 prompt 走 build_poster_prompt（引入项目画风串 style 作为主视觉基调）；
+      · 产物落 drama_media/poster_{project_id}.png（项目维度，多项目不互相覆盖）。
+    """
+    p, b = _drama_ctx(db, book_id, project_id)
+    from apps.api import cover as cover_mod
+    portrait = body.portrait if body.portrait in cover_mod._CANVAS else "9:16"
+    base_png = b""
+    base_prompt = ""
+    if not body.no_ai:
+        base_prompt = await cover_mod.build_poster_prompt(db, b, p, hint=body.hint)
+        try:
+            base_png = await cover_mod.gen_base_image(db, base_prompt,
+                                                       size=cover_mod._BASE_SIZE[portrait],
+                                                       book_id=book_id)
+        except Exception:
+            # 底图失败不阻断：降级纯渐变底，文字排版仍然交付（血泪：封面是兜底交付路径）
+            base_png = b""
+    title = getattr(p, "title", "") or b.title
+    png = cover_mod.compose_cover(title, author=b.author or "",
+                                  tagline=body.tagline, base_png=base_png or None,
+                                  style=body.style, portrait=portrait)
+    rel = cover_mod.save_cover(book_id, png, filename=cover_mod.poster_filename(project_id))
+    return {"ok": True, "path": rel, "url": f"/api/files/{rel}",
+            "ai_base": bool(base_png), "base_prompt": base_prompt, "portrait": portrait}
 
 
 @app.post("/api/books/{book_id}/drama/projects/{project_id}/plan")

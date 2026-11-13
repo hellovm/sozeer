@@ -283,6 +283,19 @@ export const bookApi = {
       `/api/books/${encodeURIComponent(bookId)}/style`, patch)
   },
 
+  /* ── 封面生成（★ v1.2.0）──
+   *  后端 AI 无字底图（走系统配置 image 模型）+ 服务端 PIL 真字体排字，
+   *  彻底规避扩散模型乱码。no_ai=true 时纯渐变底，仅预览排版。
+   */
+  generateCover(bookId: string, payload: {
+    tagline?: string; style?: 'xianxia' | 'modern'
+    no_ai?: boolean; hint?: string; portrait?: '2:3' | '9:16'
+  } = {}) {
+    return http.post<{ ok: boolean; path: string; url: string
+      ai_base: boolean; base_prompt: string; portrait: string }>(
+      `/api/books/${encodeURIComponent(bookId)}/cover`, payload)
+  },
+
   /* ── 章节 ── */
 
   /** ★ 返回裸数组（不是 {items}）—— 与后端对齐，别"想当然"包一层 */

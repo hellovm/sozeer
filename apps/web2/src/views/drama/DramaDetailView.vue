@@ -161,6 +161,33 @@ async function loadFilmCap() {
   } catch { filmCap.value = null }
 }
 
+/* ══════════════════════ ★ v1.2.0 短剧海报 ══════════════════════
+ * 与小说封面同一套"无字底图 + 服务端排字"反乱码架构，画幅 9:16 竖屏。
+ * 产物落 drama_media/poster_{projectId}.png，直接预览/下载。
+ */
+const posterBusy = ref(false)
+const posterUrl = ref('')
+const posterStyle = ref<'xianxia' | 'modern'>('xianxia')
+const posterNote = ref('')
+
+async function generatePoster() {
+  if (!bookId.value || !projectId.value) return
+  posterBusy.value = true
+  posterNote.value = ''
+  try {
+    const r = await dramaApi.generatePoster(bookId.value, projectId.value, {
+      style: posterStyle.value, portrait: '9:16',
+    })
+    posterUrl.value = r.url
+    posterNote.value = r.ai_base ? '' : '底图模型不可用，已用渐变底生成'
+    ui.ok('海报已生成')
+  } catch (e) {
+    ui.err((e as Error).message || '海报生成失败')
+  } finally {
+    posterBusy.value = false
+  }
+}
+
 /** ★ 成片导出是后台任务：提交后刷新成品列表，让刚合成的 mp4 立刻可见可下载 */
 async function submitFilm() {
   await run('film', () => dramaApi.film(bookId.value, projectId.value, episode.value), '成片合成已提交，稍后在下方「成品下载」取')
@@ -242,6 +269,31 @@ onMounted(boot)
     <AppSkeleton v-if="loading" variant="card" :count="2" />
 
     <template v-else>
+      <!-- ★ v1.2.0 短剧竖屏海报（9:16，AI 无字底图 + 服务端排字） -->
+      <AppCard title="海报">
+        <div class="poster">
+          <div class="poster__stage">
+            <img v-if="posterUrl" :src="posterUrl" :alt="project?.title" class="poster__img" />
+            <p v-else class="poster__empty">尚未生成 · 点右侧「生成海报」出一张 9:16 竖屏海报</p>
+          </div>
+          <div class="poster__acts">
+            <div class="poster__opts">
+              <label v-for="s in [['xianxia','古风竖排'],['modern','现代横排']]" :key="s[0]" class="poster__chip">
+                <input
+                  type="radio" :value="s[0]" v-model="posterStyle" />{{ s[1] }}
+              </label>
+            </div>
+            <AppButton variant="primary" :loading="posterBusy" @click="generatePoster">
+              {{ posterUrl ? '重新生成' : '生成海报' }}
+            </AppButton>
+            <AppButton v-if="posterUrl" variant="ghost" @click="downloadFile(posterUrl, `${project?.title || 'poster'}.png`)">
+              下载
+            </AppButton>
+            <p v-if="posterNote" class="poster__note">{{ posterNote }}</p>
+          </div>
+        </div>
+      </AppCard>
+
       <!-- 制作进度 -->
       <AppCard title="制作进度">
         <AppProgress :percent="progress.percent" :label="`${progress.percent}%`"

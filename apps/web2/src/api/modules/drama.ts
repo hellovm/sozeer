@@ -243,6 +243,21 @@ export const dramaApi = {
       `/api/books/${encodeURIComponent(bookId)}/drama/projects/${encodeURIComponent(projectId)}/film/capability`)
   },
 
+  /**
+   * ★ v1.2.0 短剧竖屏海报：AI 无字底图（走系统配置 image 模型）+ 服务端
+   *   PIL 真字体叠剧名/主创，默认 9:16 竖屏（短视频/抖音）。产物落
+   *   drama_media/poster_{projectId}.png。no_ai=true 时纯渐变底仅预览排版。
+   */
+  generatePoster(bookId: string, projectId: string, payload: {
+    tagline?: string; style?: 'xianxia' | 'modern'
+    no_ai?: boolean; hint?: string; portrait?: '2:3' | '9:16'
+  } = {}) {
+    return http.post<{ ok: boolean; path: string; url: string
+      ai_base: boolean; base_prompt: string; portrait: string }>(
+      `/api/books/${encodeURIComponent(bookId)}/drama/projects/${encodeURIComponent(projectId)}/poster`,
+      payload)
+  },
+
   // ── 音色（声纹资产）──
   voiceCast(bookId: string, projectId: string) {
     return http.get<{ items: VoiceCastEntry[] }>(

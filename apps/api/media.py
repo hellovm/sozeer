@@ -728,7 +728,8 @@ async def run_media(db, book_id: str, kind: str, prompt: str,
                     ip_weight: float | None = None,
                     tts_lines: list[dict] | None = None,
                     shot_kind: str = "",
-                    routes: dict | None = None) -> dict:
+                    routes: dict | None = None,
+                    size: str = "") -> dict:
     """按模型 role 路由到适配器并落盘。kind: image|video|audio。
 
     返回 {"ok": True, "path": 相对路径} 或 {"ok": False, "error": ...}。
@@ -903,12 +904,14 @@ async def run_media(db, book_id: str, kind: str, prompt: str,
                 # 修复前这里只传 (m, prompt)，分镜出图的角色长相纯靠 prompt 文字，
                 # 跨集/跨镜必然漂移。现在把 ref_image/ref_images/ip_weight 透传，
                 # 有参考图→走 IP-Adapter 工作流；无参考图→回落最简文生图（零回归）。
+                # v1.2.0：透传 size（竖版封面/海报 2:3 / 9:16）；size 空=默认 1024x1024，老行为不变。
                 data = await gen_image_comfyui(
-                    m, prompt, ref_image=ref_image, ref_images=ref_images,
+                    m, prompt, size=size or "1024x1024",
+                    ref_image=ref_image, ref_images=ref_images,
                     ip_weight=ip_weight)
             else:
                 # OpenAI 兼容图像 API 不支持参考图（silent ignore 参数，保持兼容）
-                data = await gen_image_openai(m, prompt)
+                data = await gen_image_openai(m, prompt, size=size or "1024x1024")
             path = _save_media(book_id, "image", "png", data)
         elif kind == "audio":
             # D19：有逐行声纹作业 → 多角色逐行合成再拼接（跨镜头音色一致）；

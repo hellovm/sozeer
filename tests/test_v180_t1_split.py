@@ -49,8 +49,9 @@ BASELINE_OPS = 123
 #   E4.15：POST /api/admin/models2/test-model（agnus 等 OpenAI 兼容类测试，不再误打 /system_stats）
 #   #311：DELETE /api/books/{book_id}/characters/{cid}（人物删除端点）
 #   E4.19：GET /api/admin/insight/lessons（用户纠错沉淀的避坑记录，仅管理端）
+#   ★ v1.2.0：POST /api/books/{book_id}/drama/projects/{pid}/poster（短剧竖屏海报 +1 = 392）
 # ★ 新增/删除端点时**必须**同步更新这里 —— 这是"路由未被误删"的守门测试
-EXPECTED_OPS = 391
+EXPECTED_OPS = 392
 
 
 # ==================================================== services 模块
