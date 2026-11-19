@@ -176,6 +176,12 @@ class Character(Base):
     #   把关键特征写成**文字断言**同时注入 prompt，双保险。
     ref_images: Mapped[str] = mapped_column(Text, default="")        # JSON list
     appearance_locks: Mapped[str] = mapped_column(Text, default="")  # JSON dict
+    # ★ #364 人物收录「置信度门槛 + 待确认队列」（根治泛词误报：任务/公司/文书/左肋…）
+    #   自动入册只在「强人称线索」达标时直接进册（is_auto=1, pending_review=0）；
+    #   仅「出现次数达标但人称线索不足」的疑似人物 → 入册但 pending_review=1，
+    #   前端可筛选确认/忽略。确认(confirm) 置 0，忽略(dismiss) 删除。
+    #   存量垃圾由一次性脚本/运维清理（见 deploy/cleanup_auto_chars.py）。
+    pending_review: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class WorldSetting(Base):
@@ -1431,10 +1437,10 @@ class Invoice(Base):
     reject_reason: Mapped[str] = mapped_column(Text, default="")
     void_reason: Mapped[str] = mapped_column(Text, default="")
     # 操作留痕
-    operator: Mapped[str] = mapped_column(String(64), default="")
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=now, index=True)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=now)
-    issued_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 # ============================================================ 模型供应商与路由（v0.26.2）

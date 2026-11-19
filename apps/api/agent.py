@@ -73,6 +73,7 @@ SYSTEM_PROMPT = """你是「溯字」创作平台里的一位资深网络小说�
 - draft_chapter：代笔起草一章（传入 instruction 与可选 ch_idx）。草稿会交给用户审核采纳，你不要在对话里把整章正文念出来。
 - read_chapter：读取指定章节的全文或摘要（想知道某章写了什么时必须调用，不要凭印象回答）。
 - rename_chapter：★ 改章节标题专用。用户要「改第N章标题 / 换个章名 / 这章叫XX吧」时，必须调它把新标题写进库并同步章节清单，不要只在对话里给名字。
+- patch_chapter：★ 定点局部修改专用。用户要「精修 / 去AI味道 / 改部分内容 / 把某段改一下 / 修某句话」时，必须调它——**只改指定的问题片段、保留其余原文、绝不重写整章**。只有用户明确说「整章重写 / 重写整章 / 起草新章」才用 draft_chapter。
 - add_timeline_event：往「纪年表」里记一条时间线事件（纪元/时间标记/章节/事件）。
 - add_ledger_entry：往「度量衡账本」里记一笔数值变动（金钱/经验/年龄/功法/级别/声望）。
 - check_consistency：跑一遍一致性自检（时间线是否倒流、账本余额是否断层、正文数值与账本是否对不上）。
@@ -104,6 +105,11 @@ check_consistency 与 audit_chapter 都是**按需工具，不是每轮的开场
 拿不准的时候，默认不调用。宁可少调一次，也不要让噪音盖过回答。
 
 # 关于改稿——务必遵守
+- ★ 改稿方式取决于「改多大范围」，**绝不要用整章重写去应付局部修改**（用户反复吐槽的根因）：
+  · 改**部分内容 / 去AI味道 / 精修某段 / 修某句 / 改逻辑** → 调 patch_chapter（定点局部修改，
+    只改问题片段、保留其余原文）。这是**默认**的改稿方式。
+  · 只有用户**明确要求「整章重写 / 重写整章 / 再写一版」** 才用 draft_chapter 整章代笔。
+  判定准则：用户没说「整章/重写」，一律按局部改 → patch_chapter。拿不准时先问一句再动手。
 - 用户指出逻辑问题时，先判根因（梗无落点 / 因果缺失 / 前后矛盾 / 数值冲突），再给改法；修法必须针对根因。
 - 禁止只把句子接顺：表面通顺不等于逻辑成立。实例——「我是被“饿”醒的。不是真饿，是系统
   在我脑子里敲锣」补成「不是真饿，是被系统吵醒的」只是接顺，“饿”仍然悬空；正确修法是
@@ -320,6 +326,29 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "patch_chapter",
+            "description": "★ 对某一章做**定点局部修改**（去AI味 / 改某段 / 修某处逻辑 / 换某句话），"
+                          "**只改你指定的问题片段，其余原文一字不动，绝不重写整章**。"
+                          "用户要「精修/去AI味道/改部分内容/把某段改一下」时用本工具；"
+                          "只有用户明确要「整章重写/重写整章」才用 draft_chapter。"
+                          "instruction 写清要改什么（例如『把第3段去AI腔』『修正主角口癖』）；"
+                          "可选 focus 精确指向要改的原文片段/位置，不填则按质检自动发现的问题定点改写。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ch_idx": {"type": "integer", "description": "要改的章号"},
+                    "instruction": {"type": "string",
+                                     "description": "要改什么：精修/去AI味/改某段/修某处逻辑等（必填）"},
+                    "focus": {"type": "string",
+                               "description": "（可选）要改的原文片段或定位描述；不填=按质检问题清单自动定点改写"},
+                },
+                "required": ["ch_idx", "instruction"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "add_timeline_event",
             "description": "往纪年表记一条时间线事件，用于锁死时间线、防止前后打架。",
             "parameters": {
@@ -473,6 +502,8 @@ async def execute_tool(db, book: Book, tc: dict, emit) -> str:
             return await _t_read_chapter(db, book, args, emit)
         if name == "rename_chapter":
             return await _t_rename_chapter(db, book, args, emit)
+        if name == "patch_chapter":
+            return await _t_patch_chapter(db, book, args, emit)
         if name == "add_timeline_event":
             return await _t_add_timeline_event(db, book, args, emit)
         if name == "add_ledger_entry":
@@ -1051,6 +1082,102 @@ async def _t_rename_chapter(db, book, a, emit) -> str:
     return f"已将第{ch_idx:03d}章标题改为《{title}》（章节清单已同步）。"
 
 
+async def _t_patch_chapter(db, book, a, emit) -> str:
+    """★ #364：定点局部修改工具（根治「改局部却整章重写」）。
+
+    走 deai_polish 技能（「只改被判定的问题片段，保留其余原文，不重写整章」），
+    而不是 chapter_polish（整章六项精修）。用户只让改部分内容时，绝不该把整章重写一遍。
+
+    流程：读本章原文 → 组「必须改的问题」（用户 instruction + focus 片段，或质检自动发现的问题）
+          → deai_polish 定点改写 → 校验字数不缩水/不膨胀 → 写回正文 + 同步 git。
+    """
+    from apps.api.models import Chapter as Ch
+    try:
+        ch_idx = int(a.get("ch_idx"))
+    except (TypeError, ValueError):
+        return "patch_chapter 缺少有效 ch_idx。"
+    instruction = (a.get("instruction") or "").strip()
+    focus = (a.get("focus") or "").strip()
+    if not instruction:
+        return "patch_chapter 缺少 instruction（要改什么），未执行。"
+    c = db.scalar(select(Ch).where(Ch.book_id == book.id, Ch.idx == ch_idx))
+    if not c or not (c.content or "").strip():
+        allc = db.scalars(select(Ch.idx).where(Ch.book_id == book.id).order_by(Ch.idx)).all()
+        return (f"第{ch_idx}章无正文可改。本书现有章号："
+                + ("、".join(str(x) for x in allc[:40]) if allc else "（暂无任何章节）"))
+
+    sk = skills.load("deai_polish", db)
+    if not sk:
+        await emit({"kind": "warn", "text": "未找到定点改写技能 deai_polish，无法定点修改。"})
+        return "缺少 deai_polish 技能，未做定点修改。"
+    m = gen_graph.pick_model(db, "writer") or gen_graph.pick_model(db, "default")
+    if not m:
+        await emit({"kind": "error", "text": "未配置可用模型，无法定点修改。"})
+        return "无法定点修改：缺少模型。"
+
+    sp = db.scalar(select(StyleProfile).where(StyleProfile.book_id == book.id))
+    style_dna = getattr(sp, "rules", "") or "（未设置，沿用默认：口语化、短段落、少形容词、多动作）"
+
+    # 组「必须修掉的问题」：优先用用户明确指向；没有则用质检自动发现的问题清单。
+    chars = [{"name": x.name} for x in db.scalars(
+        select(Character).where(Character.book_id == book.id)).all()]
+    if focus:
+        issues = f"只改这一处/这段：「{focus[:200]}」。\n改法：{instruction}。其余原文一字不动。"
+    else:
+        diag = quality.diagnose(gates.strip_title(c.content), book, chars, sp)
+        auto_issues = diag.notes() if diag else ""
+        issues = (f"按以下问题做定点改写（只改判定的违规片段，保留其余原文，不重写整章）：\n"
+                  f"【用户要求】{instruction}\n【自动发现的问题】\n{auto_issues}")
+    await emit({"kind": "stage", "text": f"正在对第 {ch_idx} 章做定点修改（只改问题片段，不动其余）…"})
+    prompt = skills.render(sk, issues=issues, original=c.content, style_dna=style_dna)
+    try:
+        r = await llm.complete(m, [{"role": "user", "content": prompt}], timeout=900)
+        _record_llm_call(db, book, m, "chapter_polish", r)
+    except Exception as e:
+        await emit({"kind": "warn", "text": f"定点修改模型调用失败，保留原稿：{type(e).__name__}"})
+        return "定点修改失败（模型调用出错），原稿未改动。"
+    if r.error or not (r.text or "").strip():
+        await emit({"kind": "warn", "text": "定点修改未返回内容，保留原稿。"})
+        return "定点修改未返回内容，原稿未改动。"
+
+    new_content = (r.text or "").strip()
+    # 统一标题行：定点改写应保留原章标题；若模型把标题写偏了，回填本章标题
+    old_title = f"第{ch_idx:03d}章 {c.title}".strip()
+    first = new_content.splitlines()[0].lstrip('# ').strip() if new_content else ""
+    if not re.match(r"^#\s*第\s*\d+\s*章", new_content.splitlines()[0].strip()):
+        body = new_content
+        if new_content and new_content.splitlines()[0].lstrip().startswith("#"):
+            body = "\n".join(new_content.splitlines()[1:]).strip()
+        new_content = f"# 第{ch_idx:03d}章 {c.title}\n\n{body}".strip()
+
+    # 字数护栏：定点改写不该让篇幅剧烈变化（±40% 之外视为模型跑偏重写了，回退原稿）
+    old_words = gates.count_words(gates.strip_title(c.content))
+    new_words = gates.count_words(gates.strip_title(new_content))
+    if old_words >= 300:
+        ratio = new_words / old_words
+        if ratio < 0.6 or ratio > 1.4:
+            await emit({"kind": "warn",
+                        "text": f"定点修改后篇幅异常（{old_words}→{new_words} 字），疑似模型重写越界，已保留原稿。"})
+            return "定点修改后篇幅变化过大，疑似重写越界，原稿未改动（请缩小 instruction 范围重试）。"
+
+    c.content = new_content
+    c.words = new_words
+    c.updated_at = now()
+    db.commit()
+    try:
+        from apps.api import gitrepo
+        gitrepo.write_file(book.id, f"正文/第{ch_idx:03d}章.md",
+                            f"# {old_title}\n\n{new_content}\n",
+                            commit_msg=f"定点修改第{ch_idx:03d}章：{instruction[:40]}")
+    except Exception as e:                       # noqa: BLE001
+        log.warning("patch_chapter 同步 git 失败（不影响正文入库）：book=%s ch=%s: %s",
+                    book.id, ch_idx, e)
+    await emit({"kind": "action", "type": "patch", "ch_idx": ch_idx,
+                "summary": f"第{ch_idx:03d}章定点修改完成（{old_words}→{new_words} 字）：{instruction[:40]}"})
+    return (f"已对第{ch_idx:03d}章做定点修改（{old_words}→{new_words} 字，只改问题片段、未重写整章）。"
+            f"修改诉求：{instruction[:60]}")
+
+
 async def _t_add_timeline_event(db, book, a, emit) -> str:
     from apps.api import consistency
     title = (a.get("title") or "").strip()
@@ -1257,33 +1384,52 @@ async def _t_drama_generate_grid(db, book, a, emit) -> str:
 
 
 async def _polish(db, book, content: str, pack, sp, diag, ch_idx: int, emit) -> str | None:
-    """调用 chapter_polish 技能做整章精修（模型调用，失败静默降级）。"""
-    sk = skills.load("chapter_polish", db)
-    if not sk:
-        return None
+    """★ #364 自动精修改走**定点改写**（deai_polish：只修被判定的问题、保留其余原文），
+    不再默认整章重写（chapter_polish）——根治「改局部/去AI味却整章重写」。
+
+    只有当质检/诊断**没有给出任何具体问题**（diag 为空）时，才回退到整章 chapter_polish
+    做系统性六项精修（那种场景确实需要通读全章）。失败静默降级、保留原稿。
+    """
     m = gen_graph.pick_model(db, "writer") or gen_graph.pick_model(db, "default")
     if not m:
         return None
     style_dna = getattr(sp, "rules", "") or "（未设置，沿用默认：口语化、短段落、少形容词、多动作）"
-    chars = [{"name": c.name, "role": c.role, "profile": c.profile, "voice": c.voice}
-             for c in db.scalars(select(Character).where(Character.book_id == book.id)).all()]
-    chars_txt = "\n".join(f"- {c['name']}（{c.get('role') or ''}）：{(c.get('profile') or '')[:120]}"
-                          + (f"；口癖：{c['voice']}" if c.get("voice") else "") for c in chars) or "（暂无）"
-    fs = db.scalars(select(Foreshadow).where(Foreshadow.book_id == book.id,
-                                             Foreshadow.status != "done")).all()
-    fs_txt = "\n".join(f"- {f.content}" for f in fs) or "（无）"
-    prompt = skills.render(
-        sk,
-        draft=content,
-        style_dna=style_dna,
-        world_view=getattr(pack, "world_view", "")[:1500],
-        characters=chars_txt,
-        foreshadows=fs_txt,
-        issue_notes=diag.notes() if diag else "",
-        # 未设定时给精修一个宽松参考区间（仅生成期提示，不回写、不进 UI）
-        chapter_min=book.chapter_min or 2000,
-        chapter_max=book.chapter_max or 3000,
-    )
+
+    # 有具体问题 → 定点改写（deai_polish）；没有 → 整章系统性精修（chapter_polish）
+    has_issues = bool(diag and getattr(diag, "findings", None))
+    if has_issues:
+        sk = skills.load("deai_polish", db)
+        if sk:
+            issues = diag.notes() if diag else "（按去AI味/Show-Don't-Tell/节奏/钩子标准复核）"
+            prompt = skills.render(sk, issues=issues, original=content, style_dna=style_dna)
+        else:
+            sk = None
+    if sk is None:
+        sk = skills.load("chapter_polish", db)
+        if not sk:
+            return None
+        chars = [{"name": c.name, "role": c.role, "profile": c.profile, "voice": c.voice}
+                 for c in db.scalars(select(Character).where(Character.book_id == book.id)).all()]
+        chars_txt = "\n".join(f"- {c['name']}（{c.get('role') or ''}）：{(c.get('profile') or '')[:120]}"
+                              + (f"；口癖：{c['voice']}" if c.get("voice") else "") for c in chars) or "（暂无）"
+        fs = db.scalars(select(Foreshadow).where(Foreshadow.book_id == book.id,
+                                                 Foreshadow.status != "done")).all()
+        fs_txt = "\n".join(f"- {f.content}" for f in fs) or "（无）"
+        prompt = skills.render(
+            sk,
+            draft=content,
+            style_dna=style_dna,
+            world_view=getattr(pack, "world_view", "")[:1500],
+            characters=chars_txt,
+            foreshadows=fs_txt,
+            issue_notes=diag.notes() if diag else "",
+            chapter_min=book.chapter_min or 2000,
+            chapter_max=book.chapter_max or 3000,
+        )
+    else:
+        prompt = skills.render(
+            sk, issues=diag.notes() if diag else "（按去AI味标准复核）",
+            original=content, style_dna=style_dna)
     try:
         r = await llm.complete(m, [{"role": "user", "content": prompt}], timeout=900)
         _record_llm_call(db, book, m, "chapter_polish", r)
@@ -1683,18 +1829,16 @@ async def chat_stream(db, book_id: str, message: str, history: list[dict], emit)
             msgs.append({"role": "assistant", "content": final_text or ""})
             msgs.append({"role": "user", "content":
                          "⚠️ **系统检测到你又只说了没做**。\n\n"
-                         "你刚才的回复里表达要做某事（起草/生成/重写/读取/核对/写入…），"
-                         "但这一轮**没有产生任何工具调用**，所以：\n"
+                         "你刚才说要做某事，但这一轮**没有产生任何工具调用**：\n"
                          "  · 用户看不到任何新草稿\n"
-                         "  · 你声称的「读完了」「已生成」都是**假的**（系统里没有这个动作）\n"
-                         "  · 用户已经被这个问题困扰很多次了，每次都要人工催你\n\n"
+                         "  · 你声称的「读完了」「已生成」都是**假的**（系统里没有这个动作）\n\n"
                          "**现在立刻做，不要再说话**：\n"
-                         "  · 要看内容 → 调 **read_chapter**（传 ch_idx，可用逗号分隔多章）\n"
-                         "  · 要写/重写正文 → 调 **draft_chapter**（传 instruction 与 ch_idx）\n"
-                         "  · 要记设定 → 调 **set_project_meta** / **save_world** / "
-                         "**save_character** / **save_outline**\n"
-                         "  · 要埋线 → 调 **add_foreshadow**\n\n"
-                         "禁止：道歉、解释、复述计划、「我这就去」。**第一个动作就必须是工具调用。**"})
+                         "  · 看内容 → **read_chapter**（ch_idx，可逗号分隔多章）\n"
+                         "  · 整章重写/起草新章 → **draft_chapter**（instruction、ch_idx）\n"
+                         "  · 精修/去AI味/改部分内容 → **patch_chapter**（ch_idx、instruction、可选 focus）\n"
+                         "  · 记设定 → **set_project_meta**/**save_world**/**save_character**/**save_outline**\n"
+                         "  · 埋线 → **add_foreshadow**\n\n"
+                         "禁止道歉、解释、复述计划、「我这就去」。**第一个动作就必须是工具调用。**"})
             continue
 
         # 无工具调用：正文已全部流式吐完，收尾

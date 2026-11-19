@@ -19,6 +19,8 @@ export interface Character {
   is_auto: number
   first_chapter: number
   state_now: string
+  /** ★ #364 待确认：1=低置信自动入册（需人工确认/忽略），0=已确认/手动 */
+  pending_review?: number
 }
 
 /** 世界观设定 */
@@ -95,16 +97,25 @@ export const settingApi = {
       `/api/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(cid)}`, body)
   },
 
-  /** 从正文重新识别人物 */
+  /** 从正文重新识别人物（★ #364：added_n/updated_n/pending 为计数；added/updated/pending 为名单） */
   syncCharacters(bookId: string) {
-    return http.post<{ ok: boolean; added?: number; updated?: number }>(
+    return http.post<{ ok: boolean; added_n?: number; updated_n?: number; pending?: number
+                       added?: unknown; updated?: unknown }>(
       `/api/books/${encodeURIComponent(bookId)}/characters/sync`, {})
   },
 
-  /** ★ #311 删除人物（连带清理衍生表） */
-  deleteCharacter(bookId: string, cid: string) {
+  /** ★ #311 删除人物（连带清理衍生表）。
+   * ★ #364 ignore=true：把该名字记入本书黑名单，阻止同名泛词下次 sync 再次误入册。 */
+  deleteCharacter(bookId: string, cid: string, ignore = false) {
     return http.del<{ ok: boolean; name?: string }>(
-      `/api/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(cid)}`)
+      `/api/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(cid)}`
+      + (ignore ? '?ignore=1' : ''))
+  },
+
+  /** ★ #364 确认某条「待确认」人物（清除 pending_review 标记，保留入册） */
+  confirmCharacter(bookId: string, cid: string) {
+    return http.post<{ ok: boolean; name?: string; pending_review?: number }>(
+      `/api/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(cid)}/confirm`, {})
   },
 
   /** 故事圣经（大纲/世界观/人物/伏笔一次拉全） */

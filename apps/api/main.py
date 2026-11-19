@@ -3396,7 +3396,10 @@ def sync_characters(book_id: str, body: CharSyncIn, db: Session = Depends(get_db
     if not text:
         raise HTTPException(400, "缺少待扫描正文")
     res = char_mod.sync_characters(db, book_id, text, body.ch_idx, body.min_mentions)
-    return {"ok": True, **res}
+    return {"ok": True, **res,
+            "added_n": len(res.get("added", [])),
+            "updated_n": len(res.get("updated", [])),
+            "pending": len(res.get("pending", []))}
 
 
 @app.get("/api/books/{book_id}/characters")
@@ -3703,17 +3706,34 @@ def patch_character(book_id: str, cid: str, body: CharacterIn, db: Session = Dep
     return {"ok": True}
 
 
+# ★ #364 人物「待确认」队列：确认保留（清 pending_review）/ 忽略删除（记入本书黑名单，
+#   阻止同名泛词下次 sync 又被误入册）——从根上治「误入库反复发生」。
+@app.post("/api/books/{book_id}/characters/{cid}/confirm")
+def confirm_character(book_id: str, cid: str, db: Session = Depends(get_db)):
+    from apps.api import characters as char_mod
+    c = db.get(Character, cid)
+    if not c or c.book_id != book_id:
+        raise HTTPException(404, "character not found")
+    char_mod.confirm_character(db, c)
+    return {"ok": True, "name": c.name, "pending_review": int(c.pending_review or 0)}
+
+
 @app.delete("/api/books/{book_id}/characters/{cid}")
-def delete_character(book_id: str, cid: str, db: Session = Depends(get_db)):
+def delete_character(book_id: str, cid: str, ignore: int = 0, db: Session = Depends(get_db)):
     """★ #311 修复：删除人物。曾缺此端点，前端只能「误入库·待删除」口头标记、永不真删。
 
     连带清理「按 character_id / character_name 关联」的衍生表（角色知识 / 关系图），
     避免留下孤儿引用被一致性检查误报。
+
+    ★ #364：ignore=1 时把该人物名记入本书黑名单（char_denylist），让同名泛词不再被自动入册。
     """
     c = db.get(Character, cid)
     if not c or c.book_id != book_id:
         raise HTTPException(404, "character not found")
     name = c.name
+    if ignore:
+        from apps.api import characters as char_mod
+        char_mod.add_to_denylist(db, book_id, name)
     # 衍生表清理（与 save_character 改名合并时的清理口径一致）
     for kn in db.scalars(select(CharacterKnowledge).where(
             CharacterKnowledge.book_id == book_id,

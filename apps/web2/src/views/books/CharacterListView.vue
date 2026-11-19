@@ -8,6 +8,8 @@
  *   [x] 从正文同步识别
  *   [x] 自动识别标记（is_auto）
  * ★ 新增：按提及次数排序、搜索、状态高亮
+ * ★ #364：「待确认」队列 —— 低置信自动入册（pending_review=1）显示徽标，
+ *         可一键「确认」（保留入册）或「忽略」（删除并记入本书黑名单，阻止再次误入册）
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -31,6 +33,8 @@ const items = ref<Character[]>([])
 const loading = ref(true)
 const syncing = ref(false)
 const keyword = ref('')
+// ★ #364 待确认队列筛选：all=全部 / pending=仅待确认
+const filter = ref<'all' | 'pending'>('all')
 
 // 编辑弹窗
 const editing = ref<Character | null>(null)
@@ -43,9 +47,11 @@ const saving = ref(false)
 const form = ref({ role: '', profile: '', voice: '', arc: '', state_now: '' })
 
 const filtered = computed(() => {
+  let list = items.value
+  if (filter.value === 'pending') list = list.filter(c => c.pending_review)
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return items.value
-  return items.value.filter(c =>
+  if (!kw) return list
+  return list.filter(c =>
     c.name.toLowerCase().includes(kw) ||
     (c.role || '').toLowerCase().includes(kw) ||
     (c.profile || '').toLowerCase().includes(kw))
@@ -55,7 +61,37 @@ const stats = computed(() => ({
   total: items.value.length,
   auto: items.value.filter(c => c.is_auto).length,
   named: items.value.filter(c => c.role).length,
+  pending: items.value.filter(c => c.pending_review).length,
 }))
+
+// ★ #364 确认/忽略（针对 pending_review 的「待确认」人物）
+const confirming = ref(false)
+async function confirmPending(c: Character) {
+  confirming.value = true
+  try {
+    await settingApi.confirmCharacter(bookId.value, c.id)
+    c.pending_review = 0
+    ui.ok(`已确认《${c.name}》为人物`)
+  } catch (e) {
+    if (e instanceof ApiError) ui.err(e.message)
+  } finally {
+    confirming.value = false
+  }
+}
+
+// ★ #364 忽略（删除 + 记入本书黑名单，阻止同名泛词再次误入册）
+async function ignorePending(c: Character) {
+  confirming.value = true
+  try {
+    await settingApi.deleteCharacter(bookId.value, c.id, true)
+    items.value = items.value.filter(x => x.id !== c.id)
+    ui.ok(`已忽略《${c.name}》，并加入本书黑名单（不再自动识别）`)
+  } catch (e) {
+    if (e instanceof ApiError) ui.err(e.message)
+  } finally {
+    confirming.value = false
+  }
+}
 
 onMounted(load)
 
@@ -75,7 +111,10 @@ async function sync() {
   syncing.value = true
   try {
     const r = await settingApi.syncCharacters(bookId.value)
-    ui.ok(`同步完成：新增 ${r.added ?? 0} 个，更新 ${r.updated ?? 0} 个`)
+    const addedN = r.added_n ?? (Array.isArray(r.added) ? r.added.length : 0)
+    const updatedN = r.updated_n ?? (Array.isArray(r.updated) ? r.updated.length : 0)
+    const pend = r.pending ?? 0
+    ui.ok(`同步完成：新增 ${addedN} 个${pend ? `，${pend} 个待确认` : ''}，更新 ${updatedN} 个`)
     await load()
   } catch (e) {
     if (e instanceof ApiError) ui.err(e.message)
@@ -151,6 +190,7 @@ function roleKind(role: string) {
           <h1 class="page__title">人物 · {{ stats.total }} 位</h1>
           <p class="page__sub">
             自动识别 {{ stats.auto }} 位 · 已定位角色 {{ stats.named }} 位
+            <template v-if="stats.pending"> · 待确认 {{ stats.pending }} 位</template>
           </p>
         </div>
         <AppButton variant="primary" size="sm" :loading="syncing" @click="sync">
@@ -163,6 +203,14 @@ function roleKind(role: string) {
       <div class="toolbar__search">
         <AppInput v-model="keyword" size="sm" placeholder="搜索姓名 / 定位 / 小传"
                   clearable aria-label="搜索人物" />
+      </div>
+      <!-- ★ #364 待确认队列筛选 -->
+      <div v-if="stats.pending" class="toolbar__filters">
+        <button type="button" class="chip"
+                :class="{ 'chip--on': filter === 'all' }" @click="filter = 'all'">全部</button>
+        <button type="button" class="chip"
+                :class="{ 'chip--on': filter === 'pending' }" @click="filter = 'pending'">
+          待确认 {{ stats.pending }}</button>
       </div>
       <span class="muted tiny">按提及次数排序</span>
     </div>
@@ -192,6 +240,7 @@ function roleKind(role: string) {
               </span>
             </div>
             <AppTag v-if="c.role" size="sm" :kind="roleKind(c.role)">{{ c.role }}</AppTag>
+            <AppTag v-else-if="c.pending_review" size="sm" kind="warning">待确认</AppTag>
             <AppTag v-else-if="c.is_auto" size="sm" kind="warning">待定位</AppTag>
             <button
               class="ccard__del"
@@ -209,6 +258,14 @@ function roleKind(role: string) {
           <div v-if="c.voice || c.arc" class="ccard__tags">
             <AppTag v-if="c.voice" size="sm">声线已配</AppTag>
             <AppTag v-if="c.arc" size="sm">弧光已定</AppTag>
+          </div>
+
+          <!-- ★ #364 待确认：确认保留 / 忽略（删除并拉黑） -->
+          <div v-if="c.pending_review && !c.role" class="ccard__pending" @click.stop>
+            <button class="ppill" type="button" :disabled="confirming"
+                    @click="confirmPending(c)">✓ 是人物，确认</button>
+            <button class="ppill ppill--no" type="button" :disabled="confirming"
+                    @click="ignorePending(c)">✕ 忽略并拉黑</button>
           </div>
         </div>
       </AppCard>
@@ -271,6 +328,14 @@ function roleKind(role: string) {
 
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .toolbar__search { flex: 1 1 auto; max-width: 300px; }
+.toolbar__filters { display: inline-flex; gap: var(--sp-2); }
+.chip {
+  padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: var(--fs-xs); cursor: pointer; transition: all var(--dur-fast) var(--ease);
+}
+.chip:hover { border-color: var(--brand-500); color: var(--text); }
+.chip--on { background: var(--brand-100); border-color: var(--brand-500); color: var(--brand-600); font-weight: var(--fw-medium); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-4); }
 
@@ -296,6 +361,17 @@ function roleKind(role: string) {
   -webkit-box-orient: vertical; overflow: hidden;
 }
 .ccard__tags { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* ★ #364 待确认操作条 */
+.ccard__pending { display: flex; gap: var(--sp-2); }
+.ppill {
+  flex: 1 1 auto; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg-elevated); color: var(--text); font-size: var(--fs-xs); cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+}
+.ppill:hover:not(:disabled) { border-color: var(--brand-500); color: var(--brand-600); }
+.ppill--no:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+.ppill:disabled { opacity: .5; cursor: not-allowed; }
 
 .ccard__del {
   width: 22px; height: 22px; flex-shrink: 0;

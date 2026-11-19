@@ -349,8 +349,121 @@ def test_review_queue_fields():
     with main.SessionLocal() as db:
         q = C.review_queue(db, "bk_ch_s4c")
         if q:
-            for k in ("id", "name", "mentions", "is_auto", "state_now"):
+            for k in ("id", "name", "mentions", "is_auto", "state_now", "pending_review"):
                 assert k in q[0], f"缺字段 {k}"
+
+
+# ============================================================ #364 人物置信度门槛 + 待确认队列
+def test_sync_splits_confidence_added_vs_pending():
+    """★ #364：高置信（强人称线索≥2）进 added；低置信（只有次数达标）进 pending。"""
+    from apps.api import main
+    from apps.api import characters as C
+    from apps.api.models import Book
+    from sqlalchemy import delete
+    with main.SessionLocal() as db:
+        db.execute(delete(Book).where(Book.id == "bk_ch_s464")); db.commit()
+        db.add(Book(id="bk_ch_s464", title="置信度", owner_id="u1")); db.commit()
+        # 苏明月：反复带「冷笑道/握剑/转身」强人称线索 → 高置信 → added
+        high = "苏明月冷笑道。苏明月握剑。苏明月转身。"
+        r = C.sync_characters(db, "bk_ch_s464", high, ch_idx=1)
+        assert any(x["name"] == "苏明月" for x in r["added"]), f"高置信应直接入册：{r}"
+        assert not any(x["name"] == "苏明月" for x in r["pending"]), f"高置信不该进 pending：{r}"
+        # 陈安：多次出现但无强人称上下文 → 低置信 → pending（不直接进册）
+        low = "陈安在田里。陈安去田里。陈安走了。"
+        r2 = C.sync_characters(db, "bk_ch_s464", low, ch_idx=2)
+        assert any(x["name"] == "陈安" for x in r2["pending"]), f"低置信应进待确认队列：{r2}"
+        assert not any(x["name"] == "陈安" for x in r2["added"]), f"低置信不应直接入册：{r2}"
+        # 落库状态核对
+        from apps.api.models import Character
+        from sqlalchemy import select as _select
+        su = db.scalar(_select(Character).where(
+            Character.book_id == "bk_ch_s464", Character.name == "苏明月"))
+        chen = db.scalar(_select(Character).where(
+            Character.book_id == "bk_ch_s464", Character.name == "陈安"))
+        assert su and int(su.pending_review) == 0, "高置信人物 pending_review 应为 0"
+        assert chen and int(chen.pending_review) == 1, "低置信人物 pending_review 应为 1"
+
+
+def test_candidate_hints_returns_hint_counts():
+    """★ #364：candidate_hints 返回「强人称线索次数」，供置信度分级。"""
+    from apps.api import characters as C
+    text = "苏明月冷笑道。苏明月转身。苏明月握剑。"
+    got = C.candidate_hints(text)
+    assert got.get("苏明月", 0) >= 2, f"强线索次数应≥2：{got}"
+
+
+def test_denied_name_not_readded():
+    """★ #364：忽略（记入本书黑名单）后，同名泛词下次 sync 不再误入册。"""
+    from apps.api import main
+    from apps.api import characters as C
+    from apps.api.models import Book
+    from sqlalchemy import delete, select
+    with main.SessionLocal() as db:
+        db.execute(delete(Book).where(Book.id == "bk_ch_s464d")); db.commit()
+        db.add(Book(id="bk_ch_s464d", title="黑名单", owner_id="u1")); db.commit()
+        low = "陈安在田里。陈安去田里。陈安走了。"
+        r1 = C.sync_characters(db, "bk_ch_s464d", low, ch_idx=1)
+        assert any(x["name"] == "陈安" for x in r1["pending"])
+        # 用户忽略 陈安 → 记黑名单
+        C.add_to_denylist(db, "bk_ch_s464d", "陈安")
+        assert "陈安" in C.load_denylist(db, "bk_ch_s464d")
+        # 再次 sync 同名 → 不再入册
+        r2 = C.sync_characters(db, "bk_ch_s464d", low, ch_idx=2)
+        assert not any(x["name"] == "陈安" for x in (r2["added"] + r2["pending"])), \
+            f"黑名单人物不该再入册：{r2}"
+
+
+def test_confirm_clears_pending_flag():
+    """★ #364：confirm 清 pending_review（保留入册）。"""
+    from apps.api import main
+    from apps.api import characters as C
+    from apps.api.models import Book, Character
+    from sqlalchemy import delete, select
+    with main.SessionLocal() as db:
+        db.execute(delete(Book).where(Book.id == "bk_ch_s464c")); db.commit()
+        db.add(Book(id="bk_ch_s464c", title="确认", owner_id="u1")); db.commit()
+        low = "陈安在田里。陈安去田里。陈安走了。"
+        C.sync_characters(db, "bk_ch_s464c", low, ch_idx=1)
+        chen = db.scalar(select(Character).where(
+            Character.book_id == "bk_ch_s464c", Character.name == "陈安"))
+        assert chen and int(chen.pending_review) == 1
+        C.confirm_character(db, chen)
+        assert int(chen.pending_review) == 0, "确认应清除 pending 标记"
+
+
+# ============================================================ #364 定点局部修改工具
+def test_agent_has_patch_chapter_tool():
+    """★ #364：agent 工具集含 patch_chapter（定点局部修改），且 SYSTEM_PROMPT 已声明。"""
+    from apps.api import agent
+    names = {t["function"]["name"] for t in agent.TOOLS}
+    assert "patch_chapter" in names, f"缺 patch_chapter 工具：{names}"
+    assert "patch_chapter" in agent.SYSTEM_PROMPT, "SYSTEM_PROMPT 未声明 patch_chapter"
+
+
+def test_agent_dispatch_routes_patch_chapter():
+    """★ #364：execute_tool 能路由 patch_chapter——对「无正文的章」给出可控提示
+    （证明路由已接通、且不再退回整章 draft_chapter），而非「未知工具」或抛异常。"""
+    import asyncio
+    from apps.api import agent
+    from apps.api import main
+    from apps.api.models import Book, Character, Chapter
+    from sqlalchemy import delete
+    with main.SessionLocal() as db:
+        db.execute(delete(Book).where(Book.id == "bk_ch_s464p")); db.commit()
+        db.add(Book(id="bk_ch_s464p", title="定点修改", owner_id="u1")); db.commit()
+        # 建一个「有章但无正文」的场景：patch_chapter 应给出「无正文可改」提示，不碰模型
+        db.add(Chapter(id="ch_s464p1", book_id="bk_ch_s464p", idx=7,
+                       title="空章", content="")); db.commit()
+
+        async def _emit(ev):
+            return None
+        out = asyncio.run(agent.execute_tool(
+            db, db.get(Book, "bk_ch_s464p"),
+            {"name": "patch_chapter", "arguments": {"ch_idx": 7, "instruction": "去AI味"}},
+            _emit))
+        assert isinstance(out, str) and out, f"应返回提示字符串：{out!r}"
+        assert "未知工具" not in out, f"路由未接通：{out!r}"
+        assert "无正文" in out or "无法" in out, f"应提示无正文：{out!r}"
 
 
 # ============================================================ #310 章节改名工具

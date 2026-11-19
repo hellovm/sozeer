@@ -163,22 +163,31 @@ _HINT_RE = re.compile(
     r"公主|掌柜|老板|镖头|捕头)")
 
 
-def extract_candidates(text: str) -> dict[str, int]:
-    """抽人名候选，返回 {名字: 加权分}。
+# ★ #364 高置信阈值：候选人名中「带强人称线索」的出现次数达到此值才**直接自动入册**；
+#   低于此值（只有出现次数达标、人称线索不足）→ 入册但标记 pending_review=1，进「待确认」队列。
+#   为什么用「人称线索次数」而不是「总出现次数」当置信度：
+#   泛词（任务/公司/文书/左肋/那声音…）能靠高频刷到总出现次数，但几乎不会落在
+#   「说道/长老/握剑/转身」这类强人称上下文里；真人名则往往伴随动作/说话/称谓线索。
+CONFIDENCE_HINT_THRESHOLD = 2
 
-    三重降噪，缺一层就会被「冷笑道」「丰长老」「李子」这类噪声淹没：
+
+def _scan(text: str) -> dict[str, list[int]]:
+    """核心扫描：返回 {名字: [加权分, 强人称线索次数]}。
+
+    三重降噪（缺一层就会被「冷笑道」「丰长老」「李子」这类噪声淹没）：
     1) 姓氏后同时试 1 字名与 2 字名（中文名两种都常见）。
     2) 原始出现次数 < 2 的直接丢——只出现一次的几乎都是误伤。
     3) 前缀抑制：「苏明月」出现次数 ≥「苏明」时，丢掉「苏明」。
-    权重只用于排序和达阈值，不用于突破出现次数的硬门槛。
+    加权分只用于排序和达阈值；「强人称线索次数」用于置信度分级（见 CONFIDENCE_HINT_THRESHOLD）。
     """
     body = text or ""
     if not body:
         return {}
     raw: dict[str, int] = {}
     score: dict[str, int] = {}
+    hint: dict[str, int] = {}
 
-    def bump(n: str, w: int = 1):
+    def bump(n: str, w: int = 1, counted_as_hint: bool = False):
         n = (n or "").strip()
         if not n or n in STOPWORDS:
             return
@@ -189,6 +198,8 @@ def extract_candidates(text: str) -> dict[str, int]:
             return
         raw[n] = raw.get(n, 0) + 1
         score[n] = score.get(n, 0) + w
+        if counted_as_hint:
+            hint[n] = hint.get(n, 0) + 1
 
     def near_hint(a: int, b: int, win: int = 12) -> bool:
         """线索只在「上下文」里找，不包括名字自身，避免「冷笑道」自证。"""
@@ -197,22 +208,23 @@ def extract_candidates(text: str) -> dict[str, int]:
 
     for m in _NAME_RE.finditer(body):
         sur, rest = m.group(1), m.group(2)
-        w = 3 if near_hint(m.start(), m.end()) else 1
+        is_hint = near_hint(m.start(), m.end())
+        w = 3 if is_hint else 1
         # 2 字名优先（网文里更常见），但 1 字名也记一份，交给前缀抑制裁决
         if len(rest) >= 2:
-            bump(sur + rest[:2], w)
-        bump(sur + rest[:1], w)
+            bump(sur + rest[:2], w, is_hint)
+        bump(sur + rest[:1], w, is_hint)
     for m in _TITLE_RE.finditer(body):
         # 「张三丰长老」里的「丰长老」是噪声：姓前面还挂着一个汉字，
         # 说明这个姓其实是别人名字的末字。只有前面是标点/句首/连接词时才算真称谓。
         prev = body[m.start() - 1] if m.start() > 0 else ""
         if prev and "\u4e00" <= prev <= "\u9fff" and prev not in LEADIN_CHARS:
             continue
-        bump(m.group(1) + m.group(2), 3)      # 带称谓的必然是人物
+        bump(m.group(1) + m.group(2), 3, True)   # 带称谓的必然是人物（强线索）
     for m in _BARE_TITLE_RE.finditer(body):
         # 只收 2 字及以上的，避免「一个长老」这类误伤
         if len(m.group(1)) >= 2:
-            bump(m.group(1) + m.group(2), 2)
+            bump(m.group(1) + m.group(2), 2, True)  # 「X长老」本身即强人称线索
 
     # 门槛 1：至少出现 2 次
     keep = {n for n, c in raw.items() if c >= 2}
@@ -221,50 +233,125 @@ def extract_candidates(text: str) -> dict[str, int]:
         if len(n) >= 3 and n[:len(n) - 1] in keep \
                 and raw.get(n, 0) >= raw.get(n[:len(n) - 1], 0):
             keep.discard(n[:len(n) - 1])
-    return {n: score[n] for n in keep}
+    return {n: [score[n], hint.get(n, 0)] for n in keep}
+
+
+def extract_candidates(text: str) -> dict[str, int]:
+    """抽人名候选，返回 {名字: 加权分}（向后兼容旧调用/测试；置信度请看 candidate_hints）。"""
+    return {n: v[0] for n, v in _scan(text or "").items()}
+
+
+def candidate_hints(text: str) -> dict[str, int]:
+    """★ #364：候选人名中「带强人称线索」的出现次数 {名字: 次数}，供置信度分级。"""
+    return {n: v[1] for n, v in _scan(text or "").items()}
+
+
+def _denylist_key(book_id: str) -> str:
+    return f"book:{book_id}:char_denylist"
+
+
+def load_denylist(db, book_id: str) -> set[str]:
+    """★ #364：本书已「忽略」的人物名（用户主动标记为误报），自动入册时跳过。
+
+    为什么必须有它：误报的根因是「同名泛词反复出现」——删掉旧条目，下次 sync 又会重建。
+    忽略=删除 + 记入本书黑名单，从根上阻止「同一批泛词反复误入库」。
+    """
+    from apps.api.models import Setting
+    row = db.get(Setting, _denylist_key(book_id))
+    if not row:
+        return set()
+    try:
+        return set(jl(row.value, []) or [])
+    except Exception:
+        return set()
+
+
+def add_to_denylist(db, book_id: str, name: str) -> None:
+    """把一个人物名加入本书黑名单并落库（幂等）。"""
+    from apps.api.models import Setting
+    row = db.get(Setting, _denylist_key(book_id))
+    cur = set()
+    if row:
+        try:
+            cur = set(jl(row.value, []) or [])
+        except Exception:
+            cur = set()
+    if name in cur:
+        return
+    cur.add(name)
+    if row is None:
+        row = Setting(key=_denylist_key(book_id), value=jd(sorted(cur)))
+        db.add(row)
+    else:
+        row.value = jd(sorted(cur))
+    db.commit()
 
 
 def sync_characters(db, book_id: str, text: str, ch_idx: int = 0,
-                    min_mentions: int = 3, max_new: int = 6) -> dict:
-    """把正文中够格的关键人物补进清单。返回 {added:[], updated:[]}。"""
-    cands = extract_candidates(text or "")
-    if not cands:
-        return {"added": [], "updated": []}
+                    min_mentions: int = 3, max_new: int = 6,
+                    auto_hint_threshold: int = CONFIDENCE_HINT_THRESHOLD) -> dict:
+    """把正文中够格的关键人物补进清单。
+
+    返回 {added:[], updated:[], pending:[]}：
+      · added   = 高置信（强人称线索次数 ≥ auto_hint_threshold）→ 直接自动入册
+      · pending = 低置信（只有出现次数达标）→ 入册但 pending_review=1，进「待确认」队列
+      · updated = 已有人物累加 mentions
+
+    ★ #364 核心：用「强人称线索」而非「总出现次数」做置信度分级，根治泛词误报
+    （任务/公司/文书/左肋…靠高频刷次数但落不进强人称上下文 → 归入 pending，不再直接进册）。
+    """
+    scanned = _scan(text or "")
+    if not scanned:
+        return {"added": [], "updated": [], "pending": []}
 
     existing = {c.name: c for c in db.scalars(
         select(Character).where(Character.book_id == book_id)).all()}
+    deny = load_denylist(db, book_id)
 
-    updated, added = [], []
+    updated, added, pending = [], [], []
     # 先给已有人物累加出现次数
     for name, c in existing.items():
-        hit = cands.get(name)
+        hit = scanned.get(name)
         if hit:
-            c.mentions = int(c.mentions or 0) + hit
+            c.mentions = int(c.mentions or 0) + hit[0]
             updated.append(name)
 
-    # 新人物：按出现次数降序，取前 max_new 个达到阈值的
+    # 新人物：按加权分降序，取前 max_new 个达阈值、且未被忽略的
     from apps.api.validators import valid_character_name
-    fresh = [(n, k) for n, k in cands.items()
-             if n not in existing and k >= min_mentions and valid_character_name(n)]
+    fresh = [(n, sc, ht) for n, (sc, ht) in scanned.items()
+             if n not in existing and n not in deny and sc >= min_mentions
+             and valid_character_name(n)]
     fresh.sort(key=lambda x: (-x[1], x[0]))
-    for name, k in fresh[:max_new]:
+    for name, sc, ht in fresh[:max_new]:
+        high_conf = ht >= auto_hint_threshold
         row = Character(id=f"ch_{uuid.uuid4().hex[:12]}", book_id=book_id, name=name,
                         role="", profile="", voice="", arc="", first_chapter=int(ch_idx or 0),
-                        state_now=f"第{ch_idx:03d}章首次登场", is_auto=1, mentions=int(k),
+                        state_now=f"第{ch_idx:03d}章首次登场", is_auto=1, mentions=int(sc),
+                        pending_review=0 if high_conf else 1,
                         aliases=jd([]))
         db.add(row)
-        added.append({"name": name, "mentions": k})
-    if added or updated:
+        if high_conf:
+            added.append({"name": name, "mentions": sc})
+        else:
+            pending.append({"name": name, "mentions": sc})
+    if added or updated or pending:
         db.commit()
-    return {"added": added, "updated": updated}
+    return {"added": added, "updated": updated, "pending": pending}
+
+
+def confirm_character(db, character) -> None:
+    """★ #364 用户确认某条「待确认」人物 → 清除 pending_review 标记（保留入册）。"""
+    character.pending_review = 0
+    db.commit()
 
 
 def review_queue(db, book_id: str) -> list[dict]:
-    """人物清单（含 id，前端与管理接口都需要它来定位某一条）。"""
+    """人物清单（含 id 与 pending_review，前端据此渲染「待确认」徽标/筛选）。"""
     return [{"id": c.id, "name": c.name, "role": c.role,
              "profile": c.profile, "voice": c.voice, "arc": c.arc,
              "mentions": int(c.mentions or 0),
              "is_auto": int(c.is_auto or 0), "first_chapter": int(c.first_chapter or 0),
-             "state_now": c.state_now}
+             "state_now": c.state_now,
+             "pending_review": int(getattr(c, "pending_review", 0) or 0)}
             for c in db.scalars(select(Character).where(
                 Character.book_id == book_id).order_by(Character.mentions.desc())).all()]

@@ -139,6 +139,12 @@ def migrate() -> None:
         ],
         # ★ v0.25.8 H4：发票表（新表由 create_all 建，这里只做兜底补列 ——
         #   若线上曾手工建过部分列，ADD COLUMN 幂等补齐）。
+        # ★ #364 人物收录「置信度门槛 + 待确认队列」：characters 表新增 pending_review 列。
+        #   create_all 只建表不改表，生产库已有 characters 数据 → 必须在这里幂等补列，
+        #   否则 `column characters.pending_review does not exist` 直接 500。
+        "characters": [
+            ("pending_review", "INTEGER DEFAULT 0"),
+        ],
         "invoices": [
             ("order_ids", "TEXT DEFAULT ''"),
             ("order_count", "INTEGER DEFAULT 0"),
