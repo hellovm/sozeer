@@ -4,7 +4,7 @@ name: 章节正文写作
 description: 按起承转钩结构写单章正文，严格遵守风格 DNA 与写作纪律
 version: 2
 model_role: writer
-variables: style_dna,world_view,volume_outline,brief,characters,foreshadows,early_summaries,recent_chapters,user_instruction,ch_idx,ch_title,timeline,ledger,rolling,retrieved,continuity,knowledge,outline
+variables: style_dna,world_view,volume_outline,brief,characters,foreshadows,early_summaries,recent_chapters,user_instruction,ch_idx,ch_title,timeline,ledger,rolling,retrieved,continuity,knowledge,outline,lessons
 ---
 你是长篇连载小说的执笔作者。现在要写第 {{ch_idx}} 章。
 

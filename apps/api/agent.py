@@ -802,6 +802,12 @@ async def _t_draft_chapter(db, book, a, emit) -> str:
 
     pack = ctx_builder.build_chapter_context(db, book, ch_idx, user_instruction=instruction)
     sk = skills.load("chapter_write", db)
+    # #315：本书历史避坑经验（用户在本书反复指出并要求修正的问题）。
+    #   走 skills.render 变量通道（与 #361 continuity/knowledge/outline 注入风格一致）：
+    #   模板正文的 {{lessons}} 占位符在此被替换；无条目时占位符为空、
+    #   被 render 末尾的 re.sub 清空 → 不留空段落（保留原"追加式"的零残留行为）。
+    #   每条仍带 render_block 自带的【本书避坑经验】头部，位置固定在正文末尾。
+    _draft_lessons = lessons.render_block(lessons.recent_lessons(db, book.id))
     prompt = skills.render(
         sk,
         style_dna=pack.style_dna,
@@ -818,13 +824,8 @@ async def _t_draft_chapter(db, book, a, emit) -> str:
         timeline=pack.timeline,
         ledger=pack.ledger,
         continuity=pack.continuity,
+        lessons=_draft_lessons,
     )
-    # #315：把本书历史避坑经验附在代笔提示词末尾（用户反复纠正过的问题）。
-    #   ★ 为什么用「追加」而不是改 skills 模板：模板是全局共享资产，
-    #     而避坑是**每本书自己的** —— 不能为了动态数据去改静态模板。
-    _draft_lessons = lessons.render_block(lessons.recent_lessons(db, book.id))
-    if _draft_lessons:
-        prompt = prompt + "\n\n" + _draft_lessons
     await emit({"kind": "stage", "text": f"正在生成第 {ch_idx} 章正文（模型调用中，约 1–3 分钟）…"})
     _task_event(db, task, {"kind": "stage", "text": "模型生成正文中…"}, progress="模型生成正文中…")
     r = await llm.complete(m, [{"role": "user", "content": prompt}], timeout=900)
@@ -1064,12 +1065,15 @@ async def _t_rename_chapter(db, book, a, emit) -> str:
     c.title = title
     c.updated_at = now()
     db.commit()
-    # ★ 同步 git 文件里的标题行（与 patch_chapter 写路径一致：有正文才重写）
+    # ★ 同步 git 文件里的标题行（有正文才重写）。
+    #   ★ 双标题修复：c.content 可能自带**旧**标题行（代笔/精修采纳的章节含
+    #     `# 第NNN章 旧标题`），直接前缀新标题会让 git 文件出现双 H1 且新旧不一。
+    #     strip_title 幂等（含标题就剥、不含原样），剥掉后再拼新标题。
     if c.content:
         try:
             from apps.api import gitrepo
             gitrepo.write_file(book.id, f"正文/第{ch_idx:03d}章.md",
-                              f"# 第{ch_idx:03d}章 {title}\n\n{c.content}\n",
+                              f"# 第{ch_idx:03d}章 {title}\n\n{gates.strip_title(c.content)}\n",
                               commit_msg=f"重命名第{ch_idx:03d}章：{old_title} → {title}")
         except Exception as e:                       # noqa: BLE001
             log.warning("rename_chapter 同步 git 失败（不影响标题入库）：book=%s ch=%s: %s",
@@ -1141,9 +1145,9 @@ async def _t_patch_chapter(db, book, a, emit) -> str:
         return "定点修改未返回内容，原稿未改动。"
 
     new_content = (r.text or "").strip()
-    # 统一标题行：定点改写应保留原章标题；若模型把标题写偏了，回填本章标题
-    old_title = f"第{ch_idx:03d}章 {c.title}".strip()
-    first = new_content.splitlines()[0].lstrip('# ').strip() if new_content else ""
+    # 统一标题行：定点改写应保留原章标题；若模型把标题写偏了，回填本章标题。
+    #   ★ 归一化不变量：处理后 new_content 恰好含**一个** `# 第NNN章` 标题行
+    #     （与 DB 正文形态一致）。下方 git 同步直接写 new_content，不再另拼前缀。
     if not re.match(r"^#\s*第\s*\d+\s*章", new_content.splitlines()[0].strip()):
         body = new_content
         if new_content and new_content.splitlines()[0].lstrip().startswith("#"):
@@ -1166,8 +1170,11 @@ async def _t_patch_chapter(db, book, a, emit) -> str:
     db.commit()
     try:
         from apps.api import gitrepo
+        # ★ 直接写归一化后的 new_content（已含唯一标题行）。
+        #   旧版在此另拼 `# {old_title}` 前缀 → 章节 git 文件出现双 H1 标题，
+        #   且与 DB 正文（同样含标题行）不一致；回滚到该 commit 还会污染正文。
         gitrepo.write_file(book.id, f"正文/第{ch_idx:03d}章.md",
-                            f"# {old_title}\n\n{new_content}\n",
+                            new_content + "\n",
                             commit_msg=f"定点修改第{ch_idx:03d}章：{instruction[:40]}")
     except Exception as e:                       # noqa: BLE001
         log.warning("patch_chapter 同步 git 失败（不影响正文入库）：book=%s ch=%s: %s",

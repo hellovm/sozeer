@@ -1423,8 +1423,10 @@ def patch_chapter(book_id: str, idx: int, patch: ChapterPatch, db: Session = Dep
     c.updated_at = now()
     db.commit()
     if changed and c.content:
+        # ★ 双标题修复：编辑器保存的 c.content 可能已含 `# 第NNN章` 标题行，
+        #   直接前缀会让 git 章节文件出现双 H1。strip_title 幂等（含标题就剥、不含原样）。
         gitrepo.write_file(book_id, f"正文/第{idx:03d}章.md",
-                           f"# 第{idx:03d}章 {c.title}\n\n{c.content}\n",
+                           f"# 第{idx:03d}章 {c.title}\n\n{gates.strip_title(c.content)}\n",
                            commit_msg=f"编辑第{idx:03d}章")
     return {"ok": True, "words": c.words}
 

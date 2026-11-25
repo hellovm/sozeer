@@ -752,7 +752,10 @@ async def accept_draft(db, book: Book, ch_idx: int, title: str, content: str,
     # 整次采纳 500（章节本身已落库）。降级为告警：正文照常注册，只是这条版本
     # commit 没记上，用户仍可在正文编辑器里改、下次采纳会补记。
     try:
-        gitrepo.write_file(book.id, rel, f"# 第{ch_idx:03d}章 {title}\n\n{body}\n",
+        # ★ 双标题修复：body（草稿正文）在代笔/精修场景已含 `# 第NNN章` 标题行，
+        #   直接前缀标题会让 git 章节文件出现双 H1。strip_title 幂等（含标题就剥、
+        #   不含原样），剥掉后再拼前缀 → 单标题、与 importer 规范一致。
+        gitrepo.write_file(book.id, rel, f"# 第{ch_idx:03d}章 {title}\n\n{gates.strip_title(body)}\n",
                            commit_msg=f"第{ch_idx:03d}章 {title}")
     except Exception as e:
         if emit:
