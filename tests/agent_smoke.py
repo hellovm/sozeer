@@ -45,6 +45,9 @@ BODY = "# 第001章 退婚那天，我觉醒了躺平系统\n\n" + (
 
 
 class FakeModel:
+    # ★ chat_stream._record_run 用 model.id 直接取 model_id（非 getattr 兜底），
+    #   FakeModel 必须同时提供 id（缺则 AttributeError → error 事件 → 无 chapter_draft）。
+    id = "mock"
     model_id = "mock"
     base_url = "http://mock"
     temperature = 0.7
@@ -75,10 +78,35 @@ async def fake_complete(p, messages, **kw):
     return LLMResult(text=BODY, error="", cost=0.0, model="mock")
 
 
-agent_mod.llm.act = fake_act
-agent_mod.llm.complete = fake_complete
-agent_mod.gen_graph.pick_model = lambda db, role: FakeModel()
-gitrepo.write_file = lambda *a, **k: None  # 跳过 git，纯测内核
+# ★ 测试隔离（修复跨文件污染 · 血泪"假阴性比失败更危险"）：
+#   全局 monkeypatch 必须收进 run() 内部，绝不能在模块级执行。
+#   本文件无 test_ 前缀，正常全量回归不收集它；但若显式
+#   `pytest tests/agent_smoke.py`，import 时刻的模块级 patch 会把
+#   graph.pick_model 改成返回无 provider 的 FakeModel、gitrepo.write_file 置空，
+#   泄漏给同进程的 test_core media 成本台账测试（run_media 取 m.provider
+#   抛 AttributeError → 成功场景误判 ok=False → 假失败）。收进 run() 后
+#   import 不再污染，standalone 行为不变。
+def _install_smoke_patches():
+    """安装冒烟全局 patch，返回原始引用供还原。"""
+    orig = {
+        "act": agent_mod.llm.act,
+        "complete": agent_mod.llm.complete,
+        "pick_model": graph_mod.pick_model,
+        "write_file": gitrepo.write_file,
+    }
+    agent_mod.llm.act = fake_act
+    agent_mod.llm.complete = fake_complete
+    agent_mod.gen_graph.pick_model = lambda db, role: FakeModel()
+    gitrepo.write_file = lambda *a, **k: None  # 跳过 git，纯测内核
+    return orig
+
+
+def _restore_smoke_patches(orig) -> None:
+    """还原原始引用（不测试泄漏给后续用例）。"""
+    agent_mod.llm.act = orig["act"]
+    agent_mod.llm.complete = orig["complete"]
+    agent_mod.gen_graph.pick_model = orig["pick_model"]
+    gitrepo.write_file = orig["write_file"]
 
 
 def make_book(db):
@@ -101,8 +129,12 @@ async def run():
     async def emit(e):
         events.append(e)
 
-    await agent_mod.chat_stream(db, bid, "帮我立项并写第一章", [], emit)
-    db.commit()
+    orig = _install_smoke_patches()
+    try:
+        await agent_mod.chat_stream(db, bid, "帮我立项并写第一章", [], emit)
+        db.commit()
+    finally:
+        _restore_smoke_patches(orig)
 
     kinds = {}
     for e in events:
