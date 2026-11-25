@@ -28,11 +28,17 @@ CORS_ORIGINS = [o.strip() for o in os.environ.get("NOVELFORGE_CORS", "").split("
 # 一旦开放等于免令牌交出全部路由、参数与模型结构。
 DOCS_ENABLED = os.environ.get("NOVELFORGE_DOCS", "1") == "1"
 
+# ----------------------------------------------------------------- 对话历史窗口（#62）
+# 长会话下 agent 对话历史的 token 预算（估算口径，见 history_window.estimate_tokens）。
+# 从「最新」往旧累加，超过预算就截掉更早的消息，防 token 膨胀 + 历史理解衰减。
+# 0 = 关闭窗口（保持全量透传的旧行为）。默认 4000（约 8-10 轮中文对话）。
+CHAT_HISTORY_TOKENS = int(os.environ.get("NOVELFORGE_CHAT_HISTORY_TOKENS", "4000"))
+
 
 # ----------------------------------------------------------------- 应用版本
 # v0.18 T1：版本号集中在此，main.py 的 FastAPI(version=...) 与
 # routers/system.py 的 /api/health 都引用它，避免两处各写一份而漂移。
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 
 
 def ensure_dirs() -> None:

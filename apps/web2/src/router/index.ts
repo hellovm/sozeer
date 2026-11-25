@@ -162,6 +162,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/books/QualityView.vue'),
         meta: { title: '质检报告', nav: 'books' },
       },
+      {
+        path: 'books/:bookId/dashboard',
+        name: 'dashboard',
+        component: () => import('@/views/books/BookDashboardView.vue'),
+        meta: { title: '作品看板', nav: 'books' },
+      },
 
       /* ── 短剧 ── */
       {

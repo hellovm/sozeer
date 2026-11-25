@@ -20,6 +20,8 @@ from sqlalchemy import select
 from apps.api import llm, quality
 from apps.api import costing
 from apps.api import lessons
+from apps.api import history_window   # #62 对话历史 token 感知窗口（纯函数、确定性）
+from apps.api import config as nf_config  # #62 CHAT_HISTORY_TOKENS 预算（0=关窗口）
 from apps.api.models import (
     Book, Character, Foreshadow, Setting, StyleProfile, Volume, WorldSetting,
     jd, jl, now, Task, Run, CharacterKnowledge, CharacterRelation,
@@ -1679,7 +1681,11 @@ async def chat_stream(db, book_id: str, message: str, history: list[dict], emit)
     if _lessons_block:
         msgs.append({"role": "system", "content": _lessons_block})
         lessons.bump_hits(db, _lessons_rows)
-    msgs += [{"role": m["role"], "content": m["content"]} for m in (history or [])]
+    # #62 对话历史 token 感知窗口：长会话把早期消息按预算截掉（从最新往旧），
+    #   防 token 膨胀 + 历史理解衰减。预算由 config.CHAT_HISTORY_TOKENS 控制（0=关窗口）。
+    #   ★ 只截断不生成（滚动摘要压缩留后续）；至少保留最近 1 条；纯函数确定性。
+    _hist = history_window.trim_history(history or [], nf_config.CHAT_HISTORY_TOKENS)
+    msgs += [{"role": m["role"], "content": m["content"]} for m in _hist]
     msgs.append({"role": "user", "content": message})
 
     total_cost = 0.0

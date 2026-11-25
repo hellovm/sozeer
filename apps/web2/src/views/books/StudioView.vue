@@ -416,6 +416,7 @@ watch(pendingDrafts, (list) => {
         <AppButton size="sm" variant="ghost" @click="router.push({ name: 'outline', params: { bookId } })">大纲</AppButton>
         <AppButton size="sm" variant="ghost" @click="router.push({ name: 'characters', params: { bookId } })">人物</AppButton>
         <AppButton size="sm" variant="ghost" @click="router.push({ name: 'quality', params: { bookId } })">质检</AppButton>
+        <AppButton size="sm" variant="ghost" @click="router.push({ name: 'dashboard', params: { bookId } })">看板</AppButton>
         <button
           class="studio__toggle"
           type="button"
