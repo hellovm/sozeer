@@ -100,6 +100,27 @@ def health(deep: int = 0):
         return health_mod.deep()
     return health_mod.shallow()
 
+
+# ---------------------------------------------------------------- MCP 能力发现（#14 · v1.3.2）
+#
+# ★ 语义：告诉调用方"NovelForge 暴露了哪些 MCP 工具"（能力发现，无敏感数据）。
+# ★ 需普通登录（保护性 + 不动 Bearer 白名单）。MCP 工具本体走 stdio 子进程。
+# ★ fail-open：mcp 是可选依赖，没装时返回 available=false + 安装提示，**绝不 500**。
+@router.get("/api/mcp/info")
+def mcp_info(_: "User" = Depends(auth.get_current_user)):
+    from apps.api import mcp_server
+    return {
+        "available": mcp_server._MCP_AVAILABLE,
+        "tools": mcp_server.list_tool_names(),
+        "description": "NovelForge MCP Server：确定性、只读、无副作用"
+                       "（质量诊断 / 质量闸门 / 题材包 / 风格提示词）。"
+                       "写操作（代笔/采纳）不经 MCP 暴露。",
+        "transports": ["stdio", "streamable-http"],
+        "run": "python -m apps.api.mcp_server [--http]",
+        "install_hint": ("pip install 'mcp[cli]>=2.0'"
+                         if not mcp_server._MCP_AVAILABLE else ""),
+    }
+
 @router.post("/api/auth/register")
 def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     from apps.api import risk as _risk

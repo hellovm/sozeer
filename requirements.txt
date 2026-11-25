@@ -23,3 +23,9 @@ redis>=5.0
 python-docx>=1.1
 reportlab>=4.0
 
+# v1.3.2 #14：MCP Server（把确定性/只读能力暴露给外部 agent）
+# ★ 可选依赖：mcp_server.py 延迟导入——未安装时主服务与 /api/mcp/info
+#   均正常（info 返回 available=false + 安装提示，绝不 500）。
+#   只有真正要起 `python -m apps.api.mcp_server` 时才需要安装。
+mcp>=2.0
+

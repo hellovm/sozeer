@@ -52,7 +52,7 @@ BASELINE_OPS = 123
 #   ★ v1.2.0：POST /api/books/{book_id}/drama/projects/{pid}/poster（短剧竖屏海报 +1 = 392）
 #   ★ #364：POST /api/books/{book_id}/characters/{cid}/confirm（人物待确认队列确认 +1 = 393）
 # ★ 新增/删除端点时**必须**同步更新这里 —— 这是"路由未被误删"的守门测试
-EXPECTED_OPS = 393
+EXPECTED_OPS = 394
 
 
 # ==================================================== services 模块
@@ -162,9 +162,9 @@ def test_routers_modules_exist():
     # 8（原本） + 9（v0.19.7 F3 题材市场） = 17
     assert len(genres.router.routes) == 17, \
         f"genres 应有 17 条路由，实际 {len(genres.router.routes)}"
-    # 24（v0.20.6）+ 1（v1.0-E4.11 /api/stats/daily-writes）= 25
-    assert len(system.router.routes) == 25, \
-        f"system 应有 25 条路由（含 v1.0-E4.11 日更趋势），实际 {len(system.router.routes)}"
+    # 24（v0.20.6）+ 1（v1.0-E4.11 /api/stats/daily-writes）+ 1（v1.3.2 #14 /api/mcp/info）= 26
+    assert len(system.router.routes) == 26, \
+        f"system 应有 26 条路由（含 v1.3.2 MCP 能力发现），实际 {len(system.router.routes)}"
 
 
 def test_app_routes_via_real_request():
