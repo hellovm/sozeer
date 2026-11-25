@@ -49,7 +49,11 @@ const emit = defineEmits<{
   focus: []
 }>()
 
-const uid = `in-${Math.random().toString(36).slice(2, 9)}`
+// 组件实例唯一的 DOM 关联 id（label[for]/input:id/aria-describedby），
+// 仅用于无障碍关联、非安全敏感值。★ 用 crypto.randomUUID()（密码学强随机、
+// 全局唯一）而非 Math.random()——后者低熵可预测，会触发 CodeQL
+// js/insecure-randomness 告警（安全上下文中的弱随机）。
+const uid = `in-${crypto.randomUUID()}`
 const focused = ref(false)
 
 const hasError = computed(() => Boolean(props.error))
